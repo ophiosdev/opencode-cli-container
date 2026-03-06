@@ -94,8 +94,6 @@ rm -rf /tmp/*
 
 popd || exit 1
 
-EOF
-
 rm -rf /root/.bun
 
 FOE
