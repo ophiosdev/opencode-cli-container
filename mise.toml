@@ -1,0 +1,5 @@
+[tools]
+hadolint = "latest"
+prek = "latest"
+actionlint = "latest"
+typos = "latest"
