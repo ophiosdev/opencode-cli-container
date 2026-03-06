@@ -1,0 +1,299 @@
+# OpenCode CLI Container<!-- omit from toc -->
+
+- [Container Architecture](#container-architecture)
+- [Building the Container Image](#building-the-container-image)
+  - [Build Arguments](#build-arguments)
+- [Authentication Setup](#authentication-setup)
+  - [Environment File Option](#environment-file-option)
+  - [Important Environment Variables](#important-environment-variables)
+  - [Verifying Authentication](#verifying-authentication)
+- [Azure Foundry Provider](#azure-foundry-provider)
+- [Working with OpenCode from the Container](#working-with-opencode-from-the-container)
+  - [Basic Usage Pattern](#basic-usage-pattern)
+  - [Volume Mounts Explained](#volume-mounts-explained)
+  - [Working Directory Context](#working-directory-context)
+- [Usage Examples](#usage-examples)
+  - [Interactive Session](#interactive-session)
+  - [Single Command Execution](#single-command-execution)
+  - [Environment File Usage](#environment-file-usage)
+  - [Shell Alias for Convenience](#shell-alias-for-convenience)
+- [Included Tooling and Skills](#included-tooling-and-skills)
+- [Release Model](#release-model)
+- [Repository Structure](#repository-structure)
+- [Development and Validation](#development-and-validation)
+- [Troubleshooting](#troubleshooting)
+  - [Authentication and Config Issues](#authentication-and-config-issues)
+  - [File Access Issues](#file-access-issues)
+  - [Build and Runtime Issues](#build-and-runtime-issues)
+
+A containerized OpenCode CLI environment with bundled runtime tooling, provider integrations,
+and OpenCode skills. This image is designed to give you a ready-to-run `opencode` setup for
+local project work while keeping your configuration and working directory mounted from the host.
+
+## Container Architecture
+
+- **OpenCode entrypoint**: The container starts `opencode` directly through `entrypoint.sh`
+- **Bun-based image**: Uses `oven/bun:latest` as the base image and installs `opencode-ai`
+- **Mise-managed tooling**: Activates `mise` for both interactive and non-interactive shells
+- **Curated additions**: Bundles Azure Foundry provider support, helper tooling, and reusable skills
+
+## Building the Container Image
+
+Build from the provided Dockerfile:
+
+```bash
+docker build -t opencode-cli:dev .
+```
+
+You can also use the included `Makefile`:
+
+```bash
+make build
+```
+
+### Build Arguments
+
+Customize the image version and local tag as needed:
+
+```bash
+docker build \
+  --build-arg OPENCODE_VERSION=latest \
+  -t opencode-cli:dev .
+```
+
+With `make`:
+
+```bash
+make build IMAGE=opencode-cli TAG=dev OPENCODE_VERSION=latest
+```
+
+## Authentication Setup
+
+OpenCode configuration is stored under the container user's config directory. For practical use,
+mount your host home directory so configuration persists across runs.
+
+Typical run pattern:
+
+```bash
+docker run -it --rm \
+  -v $HOME:/home/bun \
+  -v ${PWD}:/work \
+  opencode-cli:dev
+```
+
+This gives the container access to:
+
+- `/home/bun` for OpenCode config and any persisted credentials
+- `/work` for the project you want OpenCode to read and modify
+
+### Environment File Option
+
+If your OpenCode setup depends on provider-specific environment variables, keep them in a local
+env file instead of placing secrets directly on the command line.
+
+```bash
+install -m 600 /dev/null .env
+${EDITOR:-vi} .env
+
+docker run -it --rm \
+  -v $HOME:/home/bun \
+  -v ${PWD}:/work \
+  --env-file .env \
+  opencode-cli:dev
+```
+
+Security tips:
+
+- Keep `.env` files out of version control
+- Restrict permissions to the current user only
+- Prefer short-lived credentials where possible
+
+### Important Environment Variables
+
+The exact variables depend on the provider configuration you use with OpenCode. This image does
+not hardcode credentials, so pass provider settings at runtime with `-e` or `--env-file`.
+
+Common patterns include:
+
+- OpenAI-compatible endpoints and API keys
+- Azure-related endpoint, deployment, and credential variables
+- Any custom variables required by OpenCode providers you enable in your config
+
+### Verifying Authentication
+
+Once your configuration is mounted and any required variables are provided, verify the container
+starts correctly:
+
+```bash
+docker run -it --rm \
+  -v $HOME:/home/bun \
+  -v ${PWD}:/work \
+  --env-file .env \
+  opencode-cli:dev --help
+```
+
+If your setup is correct, OpenCode should start without configuration-related errors.
+
+## Azure Foundry Provider
+
+The image builds and installs the `azure-foundry-provider` package during the Docker build and
+places the compiled provider under `/usr/local/provider/azure-foundry-provider`.
+
+This means the container is prepared for Azure Foundry-oriented OpenCode setups without requiring
+you to compile the provider on first run. Provider credentials and runtime configuration are still
+supplied by your OpenCode config and environment variables.
+
+## Working with OpenCode from the Container
+
+For normal usage, mount both your home directory and the current project directory.
+
+### Basic Usage Pattern
+
+```bash
+docker run -it --rm \
+  -v $HOME:/home/bun \
+  -v ${PWD}:/work \
+  --env-file .env \
+  opencode-cli:dev [OPENCODE_ARGS]
+```
+
+Replace `[OPENCODE_ARGS]` with the arguments supported by your installed `opencode-ai` version.
+
+### Volume Mounts Explained
+
+- `-v $HOME:/home/bun`: Persists OpenCode config and other user-level state
+- `-v ${PWD}:/work`: Mounts your current project into the container working directory
+- `--env-file .env`: Supplies provider credentials and runtime settings without exposing them in shell history
+- `--rm`: Removes the container after the process exits
+- `-it`: Provides an interactive terminal for CLI workflows
+
+### Working Directory Context
+
+The container runs in `/work`, which maps to your current host directory. This means:
+
+- Project files are immediately available to OpenCode
+- Files created or edited by OpenCode are written back to your local directory
+- Relative paths behave as expected inside the container
+
+## Usage Examples
+
+### Interactive Session
+
+Start an interactive OpenCode session in the current project:
+
+```bash
+docker run -it --rm \
+  -v $HOME:/home/bun \
+  -v ${PWD}:/work \
+  --env-file .env \
+  opencode-cli:dev
+```
+
+### Single Command Execution
+
+Run a one-off command such as help or version output:
+
+```bash
+docker run -it --rm \
+  -v $HOME:/home/bun \
+  -v ${PWD}:/work \
+  --env-file .env \
+  opencode-cli:dev --version
+```
+
+### Environment File Usage
+
+If you want to keep project-local settings, create a dedicated env file and reuse it:
+
+```bash
+install -m 600 /dev/null .env
+${EDITOR:-vi} .env
+
+docker run -it --rm \
+  -v $HOME:/home/bun \
+  -v ${PWD}:/work \
+  --env-file .env \
+  opencode-cli:dev --help
+```
+
+### Shell Alias for Convenience
+
+Create a short alias for daily use:
+
+```bash
+# Add to your ~/.bashrc or ~/.zshrc
+alias opencodec='docker run -it --rm -v $HOME:/home/bun -v ${PWD}:/work --env-file .env opencode-cli:dev'
+
+# Then use simply:
+opencodec --help
+opencodec
+```
+
+## Included Tooling and Skills
+
+The image currently installs or bundles the following pieces during build:
+
+- `opencode-ai`
+- `mise`
+- `python`
+- `go`
+- `ripgrep`
+- `uv`
+- `git`
+- `sudo`, `curl`, `gpg`, `make`
+- Azure Foundry provider build output
+- OpenCode skills for `humanizer`, `aleph`, and changelog automation
+
+The repository also includes `git-export.py`, a helper script that exports a single directory from
+a GitHub repository using a treeless, sparse clone workflow.
+
+## Release Model
+
+This repo publishes container images to GitHub Container Registry from version tags.
+
+- `create-linked-release.yml` polls an upstream repository release stream and mirrors matching tags into this repo
+- `build-and-deploy.yml` runs on `v*` tags, validates semver, and publishes the image to `ghcr.io/ophiosdev/opencode-cli`
+- Published tags include semver variants, a commit SHA tag, and `latest` when enabled for the default branch
+
+## Repository Structure
+
+- `Dockerfile`: Builds the OpenCode container image and installs providers, tools, and skills
+- `entrypoint.sh`: Loads shell environment and starts `opencode`
+- `git-export.py`: Sparse GitHub directory export helper
+- `Makefile`: Convenience targets for local image build and cleanup
+- `.github/workflows/`: PR validation, release sync, and registry publishing workflows
+- `mise.toml`: Local tool definitions for linting and validation utilities
+
+## Development and Validation
+
+The repo uses `pre-commit` for lightweight validation of committed files.
+
+Configured checks include:
+
+- YAML linting with `yamllint`
+- Dockerfile linting with `hadolint`
+- Markdown linting with `markdownlint-cli2`
+- GitHub Actions validation with `actionlint`
+- Spelling checks with `typos`
+
+The pull request workflow also performs a Docker build smoke test when `Dockerfile` changes.
+
+## Troubleshooting
+
+### Authentication and Config Issues
+
+- Repeated setup prompts: ensure `-v $HOME:/home/bun` is present so config persists
+- Missing credentials: confirm required provider variables are passed with `-e` or `--env-file`
+- Startup config failures: run `opencode-cli:dev --help` first to confirm the base container starts cleanly
+
+### File Access Issues
+
+- Project files not visible: confirm `-v ${PWD}:/work` is included
+- Output files not appearing locally: check that your command is operating inside `/work`
+- Permission mismatches: inspect ownership on your mounted directories and rebuild or adjust runtime strategy if needed
+
+### Build and Runtime Issues
+
+- Build failures fetching dependencies: verify network access to npm, GitHub, and other upstream sources used in the Docker build
+- Provider or skill changes upstream: rebuild the image to refresh fetched components
+- Command invocation errors: place OpenCode arguments after the image name and use `--help` to confirm supported flags
