@@ -23,7 +23,8 @@ jobs:
       - name: Checkout code
         id: checkout
         uses: actions/checkout@v5
-
+        with:
+          fetch-depth: 0
       - name: Setup toolchain with mise
         uses: jdx/mise-action@v2
 
