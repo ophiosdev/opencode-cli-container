@@ -62,22 +62,27 @@ else
 fi
 EOF
 
-chown -Rh bun:bun "$(echo ~bun)"
-
 FOE
 
 COPY --chmod=0555 entrypoint.sh /entrypoint.sh
 
 ARG OPENCODE_VERSION=latest
+ARG AZURE_FOUNDRY_PROVIDER_VERSION=0.2.0
+ARG ENGRAM_VERSION=v1.9.1
+
 ENV OPENCODE_CONFIG_DIR=/etc/opencode
+ENV OPENCODE_EXPERIMENTAL=1
+ENV ENGRAM_DATA_DIR=/home/bun/.local/share/opencode/engram
 
 # hadolint ignore=DL3003,SC2164
 RUN <<'FOE'
 
 export BUN_INSTALL=/usr/local/bun
 export PROVIDER_DIR=/usr/local/provider
+export OPENCODE_PLUGINS_DIR="${OPENCODE_CONFIG_DIR}/plugins"
 
-mkdir -p "${BUN_INSTALL}" "${OPENCODE_CONFIG_DIR}" "${PROVIDER_DIR}"
+mkdir -p "${BUN_INSTALL}" "${OPENCODE_CONFIG_DIR}" "${OPENCODE_PLUGINS_DIR}" "${PROVIDER_DIR}"
+chmod 0777 "${OPENCODE_CONFIG_DIR}"
 
 bun install -g "opencode-ai@${OPENCODE_VERSION}" || exit 1
 
@@ -86,7 +91,7 @@ bun install -g "opencode-ai@${OPENCODE_VERSION}" || exit 1
 #
 pushd /tmp
 
-bun install "github:ophiosdev/azure-foundry-provider" || exit 1
+bun install "github:ophiosdev/azure-foundry-provider#v${AZURE_FOUNDRY_PROVIDER_VERSION}" || exit 1
 cd node_modules/azure-foundry-provider || exit 1
 bun build --outdir=dist src/index.ts || exit 1
 mv dist "${PROVIDER_DIR}/azure-foundry-provider"
@@ -94,23 +99,30 @@ rm -rf /tmp/*
 
 popd || exit 1
 
+engram_version="${ENGRAM_VERSION#v}"
+engram_archive="engram_${engram_version}_linux_amd64.tar.gz"
+engram_url="https://github.com/Gentleman-Programming/engram/releases/download/${ENGRAM_VERSION}/${engram_archive}"
+curl -fsSL "${engram_url}" | tar -C /usr/local/bin -xvzf - engram
+curl -fsSL 'https://raw.githubusercontent.com/Gentleman-Programming/engram/refs/tags/${ENGRAM_VERSION}/plugin/opencode/engram.ts' -o "${OPENCODE_PLUGINS_DIR}/engram.ts"
+
+
 rm -rf /root/.bun
+
+chown -Rh bun:bun "$(echo ~bun)"
 
 FOE
 
-USER bun
+USER bun:bun
 
 RUN mise use -g --silent python@3.12.12 go@1.24 ripgrep uv
 
 # hadolint ignore=DL3045
 COPY --chown=bun:bun git-export.py git-export.py
 
-ENV XDG_CONFIG_HOME=/home/bun/.config
-
 RUN <<'FOE'
    source /etc/bash.bashrc
 
-   skills_dir="${XDG_CONFIG_HOME}/opencode/skills"
+   skills_dir="${OPENCODE_CONFIG_DIR}/skills"
    mkdir -p "${skills_dir}"
 
    skill_name="humanizer"
@@ -126,7 +138,48 @@ RUN <<'FOE'
    python git-export.py https://github.com/sickn33/antigravity-awesome-skills/skills/changelog-automation "${skills_dir}/${skill_name}" --force
 
    rm -f git-export.py
+
+   cat >"${OPENCODE_CONFIG_DIR}/opencode.json" <<-'EOF'
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": [
+    "engram"
+  ],
+  "mcp": {
+    "engram": {
+      "command": [
+        "engram",
+        "mcp",
+        "--tools=agent"
+      ],
+      "enabled": true,
+      "type": "local"
+    },
+    "sequential-thinking": {
+      "type": "local",
+      "command": [
+        "bun",
+        "x",
+        "@modelcontextprotocol/server-sequential-thinking"
+      ]
+    },
+    "aleph": {
+      "type": "local",
+      "command": [
+        "aleph",
+        "--enable-actions",
+        "--workspace-mode",
+        "any",
+        "--tool-docs",
+        "concise"
+      ]
+    }
+  }
+}
+EOF
+
 FOE
+
 
 # Set BASH_ENV so non-interactive bash shells (spawned by OpenCode CLI) source /etc/bash.bashrc
 # This ensures mise activation and PATH are available in shell commands
