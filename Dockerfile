@@ -137,6 +137,8 @@ RUN <<'FOE'
    skill_name="changelog"
    python git-export.py https://github.com/sickn33/antigravity-awesome-skills/skills/changelog-automation "${skills_dir}/${skill_name}" --force
 
+   uv pip install --system jcodemunch-mcp
+
    rm -f git-export.py
 
    cat >"${OPENCODE_CONFIG_DIR}/opencode.json" <<-'EOF'
@@ -147,13 +149,13 @@ RUN <<'FOE'
   ],
   "mcp": {
     "engram": {
+      "type": "local",
       "command": [
         "engram",
         "mcp",
         "--tools=agent"
       ],
-      "enabled": true,
-      "type": "local"
+      "enabled": false
     },
     "sequential-thinking": {
       "type": "local",
@@ -161,7 +163,8 @@ RUN <<'FOE'
         "bun",
         "x",
         "@modelcontextprotocol/server-sequential-thinking"
-      ]
+      ],
+      "enabled": false
     },
     "aleph": {
       "type": "local",
@@ -172,7 +175,23 @@ RUN <<'FOE'
         "any",
         "--tool-docs",
         "concise"
-      ]
+      ],
+      "enabled": false
+    },
+    "msdocs": {
+      "type": "remote",
+      "url": "https://learn.microsoft.com/api/mcp",
+      "enabled": false
+    },
+    "jcodemunch": {
+      "type": "local",
+      "command": [
+        "jcodemunch-mcp", "--log-level", "DEBUG", "--log-file", "/home/bun/.local/share/opencode/log/jcodemunch.log"
+      ],
+      "environment": {
+        "JCODEMUNCH_SHARE_SAVINGS": "0"
+      },
+      "enabled": false
     }
   }
 }
