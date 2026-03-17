@@ -136,6 +136,11 @@ bun install -g "opencode-ai@${OPENCODE_VERSION}" || exit 1
 ) || exit 1
 
 ###
+# Gemini plugin
+#
+bun install -g 'opencode-gemini-auth@latest' || exit 1
+
+###
 # agent browser
 (
   bun install -g --trust agent-browser \
@@ -200,7 +205,8 @@ RUN <<'FOE'
 {
   "$schema": "https://opencode.ai/config.json",
   "plugin": [
-    "engram"
+    "engram",
+    "file:///usr/local/bun/install/global/node_modules/opencode-gemini-auth"
   ],
   "mcp": {
     "engram": {
@@ -255,6 +261,7 @@ EOF
 FOE
 
 COPY --chmod=0555 entrypoint.sh /entrypoint.sh
+COPY --chmod=0555 convert-gemini.auth.ts /usr/local/bin/convert-gemini.auth.ts
 
 USER bun:bun
 
