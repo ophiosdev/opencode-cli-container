@@ -9,6 +9,7 @@ OPENCODE_VERSION ?= latest
 
 build:
 	docker build \
+	  --progress=plain \
 		-t $(IMAGE_REF) \
 		-f $(DOCKERFILE) \
 		--build-arg OPENCODE_VERSION=$(OPENCODE_VERSION) \
