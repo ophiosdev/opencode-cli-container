@@ -5,16 +5,23 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 USER root
 
-ENV DEBIAN_FRONTEND=noninteractive
+ENV DEBIAN_FRONTEND="noninteractive"
+ARG PYTHON_VERSION="3.12"
+ENV PYTHON_DIR="/usr/local/share/python/${PYTHON_VERSION}"
+ENV PATH="${PATH}:${PYTHON_DIR}/bin"
 
 # hadolint ignore=DL3008,DL3015,SC2116
 RUN <<'FOE'
+
+ln -s /usr/local/bin/bun /usr/local/bin/node
+ls -s /usr/local/bin/bun /usr/local/bin/npx
 
 apt-get update
 apt-get install \
     sudo \
     curl \
     git \
+    jq \
     libatomic1 \
     -y
 
@@ -50,6 +57,7 @@ curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh
 
 # Create the bash_profile.d directory and mise script
 mkdir /etc/bash_profile.d
+
 cat >/etc/bash_profile.d/mise <<-'EOF'
 export PATH=/usr/local/bun/bin:$HOME/.local/bin:$PATH
 # Use appropriate mise activation based on shell type
@@ -62,17 +70,26 @@ else
 fi
 EOF
 
-FOE
+mise install-into "python@${PYTHON_VERSION}" "${PYTHON_DIR}"
 
-COPY --chmod=0555 entrypoint.sh /entrypoint.sh
+cat >/etc/bash_profile.d/python <<-'EOF'
+export PATH="${PATH}:${PYTHON_DIR}/bin"
+EOF
+
+FOE
 
 ARG OPENCODE_VERSION=latest
 ARG AZURE_FOUNDRY_PROVIDER_VERSION=0.2.0
-ARG ENGRAM_VERSION=v1.9.1
+ARG ENGRAM_VERSION=latest
 
 ENV OPENCODE_CONFIG_DIR=/etc/opencode
 ENV OPENCODE_EXPERIMENTAL=1
 ENV ENGRAM_DATA_DIR=/home/bun/.local/share/opencode/engram
+
+ENV AGENT_BROWSER_ENGINE=lightpanda
+
+# hadolint ignore=DL3045
+COPY git-export.py git-export.py
 
 # hadolint ignore=DL3003,SC2164
 RUN <<'FOE'
@@ -80,6 +97,25 @@ RUN <<'FOE'
 export BUN_INSTALL=/usr/local/bun
 export PROVIDER_DIR=/usr/local/provider
 export OPENCODE_PLUGINS_DIR="${OPENCODE_CONFIG_DIR}/plugins"
+
+###
+# Helper function to resolve 'latest' to actual version tag from GitHub API
+# Usage: resolve_github_latest_version <owner>/<repo> <version>
+# Returns: actual version tag (resolves 'latest' via API, otherwise returns input as-is)
+#
+resolve_github_latest_version() {
+    local repo_slug="${1}"
+    local version="${2}"
+
+    if [ "${version}" = "latest" ]; then
+        version=$(curl -fsSL "https://api.github.com/repos/${repo_slug}/releases/latest" | jq -r '.tag_name')
+        if [ -z "${version}" ] || [ "${version}" = "null" ]; then
+            echo "Failed to fetch latest release version for ${repo_slug} from GitHub API" >&2
+            return 1
+        fi
+    fi
+    echo "${version}"
+}
 
 mkdir -p "${BUN_INSTALL}" "${OPENCODE_CONFIG_DIR}" "${OPENCODE_PLUGINS_DIR}" "${PROVIDER_DIR}"
 chmod 0777 "${OPENCODE_CONFIG_DIR}"
@@ -89,35 +125,53 @@ bun install -g "opencode-ai@${OPENCODE_VERSION}" || exit 1
 ###
 # providers
 #
-pushd /tmp
+(
+  pushd /tmp \
+  && bun install "github:ophiosdev/azure-foundry-provider#v${AZURE_FOUNDRY_PROVIDER_VERSION}" \
+  && cd node_modules/azure-foundry-provider \
+  && bun build --outdir=dist src/index.ts \
+  && mv dist "${PROVIDER_DIR}/azure-foundry-provider" \
+  && rm -rf /tmp/* \
+  && popd
+) || exit 1
 
-bun install "github:ophiosdev/azure-foundry-provider#v${AZURE_FOUNDRY_PROVIDER_VERSION}" || exit 1
-cd node_modules/azure-foundry-provider || exit 1
-bun build --outdir=dist src/index.ts || exit 1
-mv dist "${PROVIDER_DIR}/azure-foundry-provider"
-rm -rf /tmp/*
+###
+# agent browser
+(
+  bun install -g --trust agent-browser \
+  && curl -fsSL -o /usr/local/bin/lightpanda 'https://github.com/lightpanda-io/browser/releases/download/nightly/lightpanda-x86_64-linux' \
+  && chmod a+x /usr/local/bin/lightpanda
+) || exit 1
 
-popd || exit 1
-
-engram_version="${ENGRAM_VERSION#v}"
+###
+# engram
+#
+engram_resolved_version=$(resolve_github_latest_version "Gentleman-Programming/engram" "${ENGRAM_VERSION}") || exit 1
+engram_version="${engram_resolved_version#v}"
 engram_archive="engram_${engram_version}_linux_amd64.tar.gz"
-engram_url="https://github.com/Gentleman-Programming/engram/releases/download/${ENGRAM_VERSION}/${engram_archive}"
-curl -fsSL "${engram_url}" | tar -C /usr/local/bin -xvzf - engram
-curl -fsSL 'https://raw.githubusercontent.com/Gentleman-Programming/engram/refs/tags/${ENGRAM_VERSION}/plugin/opencode/engram.ts' -o "${OPENCODE_PLUGINS_DIR}/engram.ts"
+engram_url="https://github.com/Gentleman-Programming/engram/releases/download/${engram_resolved_version}/${engram_archive}"
+(
+  curl -fsSL "${engram_url}" | tar -C /usr/local/bin -xvzf - engram \
+  && curl -fsSL "https://raw.githubusercontent.com/Gentleman-Programming/engram/refs/tags/${engram_resolved_version}/plugin/opencode/engram.ts" -o "${OPENCODE_PLUGINS_DIR}/engram.ts"
+)
 
+###
+# UV
+uv_resolved_version=$(resolve_github_latest_version "astral-sh/uv" "${UV_VERSION:-latest}") || exit 1
+uv_version="${uv_resolved_version#v}"
+uv_url="https://releases.astral.sh/github/uv/releases/download/${uv_version}/uv-x86_64-unknown-linux-gnu.tar.gz"
+curl -fsSL "${uv_url}" | tar -C /usr/local/bin -xvzf - --strip-components=1 --wildcards '*/uv*' || exit 1
 
+##
+# jcodemunch-mcp
+uv pip install --system jcodemunch-mcp || exit 1
+
+###
+# cleanup
 rm -rf /root/.bun
-
 chown -Rh bun:bun "$(echo ~bun)"
 
 FOE
-
-USER bun:bun
-
-RUN mise use -g --silent python@3.12.12 go@1.24 ripgrep uv
-
-# hadolint ignore=DL3045
-COPY --chown=bun:bun git-export.py git-export.py
 
 RUN <<'FOE'
    source /etc/bash.bashrc
@@ -135,9 +189,10 @@ RUN <<'FOE'
    curl -L 'https://raw.githubusercontent.com/Hmbown/aleph/refs/heads/main/docs/prompts/aleph.md' -o "${skills_dir}/${skill_name}/SKILL.md"
 
    skill_name="changelog"
-   python git-export.py https://github.com/sickn33/antigravity-awesome-skills/skills/changelog-automation "${skills_dir}/${skill_name}" --force
+   python git-export.py "https://github.com/sickn33/antigravity-awesome-skills/skills/changelog-automation" "${skills_dir}/${skill_name}" --force
 
-   uv pip install --system jcodemunch-mcp
+   skill_name="agent-browser"
+   python git-export.py "https://github.com/vercel-labs/agent-browser/tree/main/skills/${skill_name}" "${skills_dir}/${skill_name}" --force
 
    rm -f git-export.py
 
@@ -155,7 +210,7 @@ RUN <<'FOE'
         "mcp",
         "--tools=agent"
       ],
-      "enabled": false
+      "enabled": true
     },
     "sequential-thinking": {
       "type": "local",
@@ -199,6 +254,11 @@ EOF
 
 FOE
 
+COPY --chmod=0555 entrypoint.sh /entrypoint.sh
+
+USER bun:bun
+
+RUN mise use -g --silent go@1.24 ripgrep
 
 # Set BASH_ENV so non-interactive bash shells (spawned by OpenCode CLI) source /etc/bash.bashrc
 # This ensures mise activation and PATH are available in shell commands
