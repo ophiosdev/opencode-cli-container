@@ -4,6 +4,8 @@
 - [Building the Container Image](#building-the-container-image)
   - [Build Arguments](#build-arguments)
 - [Authentication Setup](#authentication-setup)
+  - [Reusing Existing Gemini CLI Authentication](#reusing-existing-gemini-cli-authentication)
+  - [Manual Gemini Authentication in the Container](#manual-gemini-authentication-in-the-container)
   - [Environment File Option](#environment-file-option)
   - [Important Environment Variables](#important-environment-variables)
   - [Verifying Authentication](#verifying-authentication)
@@ -95,6 +97,76 @@ This gives the container access to:
 - `/home/bun` for OpenCode config and any persisted credentials
 - `/home/bun/.local/share/opencode` through the home mount for persisted local OpenCode and memory-related state
 - `/work` for the project you want OpenCode to read and modify
+
+### Reusing Existing Gemini CLI Authentication
+
+If you already authenticated with `gemini-cli` on the host, the container can reuse that login
+automatically.
+
+At startup, `entrypoint.sh` checks whether `~/.gemini/oauth_creds.json` exists inside the
+container. If it does, the Bun script `convert-gemini.auth.ts` converts that Gemini OAuth state
+into OpenCode's auth store at `~/.local/share/opencode/auth.json`.
+
+Typical run pattern:
+
+```bash
+docker run -it --rm \
+  -v $HOME:/home/bun \
+  -v ${PWD}:/work \
+  opencode-cli:dev
+```
+
+With that home-directory mount:
+
+- host `~/.gemini/oauth_creds.json` becomes available in the container at `/home/bun/.gemini/oauth_creds.json`
+- the entrypoint converts it into OpenCode auth automatically before launching `opencode`
+- existing entries in `~/.local/share/opencode/auth.json` are preserved and only the `google` provider entry is updated
+
+Notes:
+
+- If `~/.gemini/oauth_creds.json` is not present, startup stays silent and OpenCode launches normally
+- If the Gemini credentials file exists but is malformed or missing required token fields, container startup fails so the problem is visible
+- The converter path inside the image is `/usr/local/bin/convert-gemini.auth.ts`
+
+### Manual Gemini Authentication in the Container
+
+If you do not already have reusable Gemini CLI credentials on the host, you can authenticate
+manually from inside the container with the `opencode-gemini-auth` plugin.
+
+Start the container with a bash shell instead of the normal entrypoint:
+
+```bash
+docker run -it --rm \
+  --entrypoint bash \
+  -v $HOME:/home/bun \
+  -v ${PWD}:/work \
+  opencode-cli:dev
+```
+
+Then run the login flow manually inside the container:
+
+```bash
+opencode auth login
+```
+
+In the OpenCode prompt flow:
+
+- select `Google`
+- select `OAuth with Google (Gemini CLI)`
+- complete the browser-based authorization flow
+
+If you are running the container in an environment where the browser callback cannot be completed
+automatically, use the fallback flow described by the plugin and paste the redirected callback URL
+or authorization code when prompted.
+
+After successful login, the credential is stored in your mounted home directory under OpenCode's
+data path, so future container runs can reuse it:
+
+- `/home/bun/.local/share/opencode/auth.json` for provider auth
+- `/home/bun/.config/opencode` for config
+
+Once this has been done once, subsequent normal container starts can use the stored OpenCode auth
+directly, without repeating the manual login flow.
 
 ### Environment File Option
 
