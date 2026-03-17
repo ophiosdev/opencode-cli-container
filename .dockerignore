@@ -2,3 +2,4 @@
 !Dockerfile
 !entrypoint.sh
 !git-export.py
+!convert-gemini.auth.ts
