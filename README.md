@@ -331,7 +331,7 @@ opencodec
 
 ## Included Tooling and Skills
 
-The image currently installs or bundles the following pieces during build:
+The build bundles these tools and skills:
 
 - `opencode-ai`
 - `mise`
@@ -347,7 +347,7 @@ The image currently installs or bundles the following pieces during build:
 - `git`
 - `sudo`, `curl`, `gpg`, `make`
 - Azure Foundry provider build output
-- OpenCode skills for `humanizer`, `aleph`, and changelog automation
+- OpenCode skills for `stop-slop`, `aleph`, and changelog automation
 
 The repository also includes `git-export.py`, a helper script that exports a single directory from
 a GitHub repository using a treeless, sparse clone workflow.
