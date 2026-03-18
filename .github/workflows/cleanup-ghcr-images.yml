@@ -1,0 +1,231 @@
+name: Cleanup GHCR Images
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      retention_days:
+        description: Delete image versions older than this many days
+        required: false
+        default: ''
+      dry_run:
+        description: Log deletions without removing image versions
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  packages: write
+
+env:
+  PACKAGE_TYPE: container
+  PACKAGE_NAME: opencode-cli
+  RETENTION_DAYS: ${{ inputs.retention_days || vars.GHCR_RETENTION_DAYS || '45' }}
+  DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+
+jobs:
+  cleanup-by-age:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete old container versions but keep one
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const packageType = process.env.PACKAGE_TYPE;
+            const packageName = process.env.PACKAGE_NAME;
+            const retentionDays = Number(process.env.RETENTION_DAYS);
+            const dryRun = process.env.DRY_RUN === 'true';
+            const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+
+            const paginateVersions = async () => {
+              try {
+                return {
+                  scope: 'org',
+                  versions: await github.paginate(
+                    github.rest.packages.getAllPackageVersionsForPackageOwnedByOrg,
+                    {
+                      package_type: packageType,
+                      package_name: packageName,
+                      org: owner,
+                      per_page: 100,
+                    },
+                  ),
+                };
+              } catch (error) {
+                if (error.status !== 404) {
+                  throw error;
+                }
+
+                return {
+                  scope: 'user',
+                  versions: await github.paginate(
+                    github.rest.packages.getAllPackageVersionsForPackageOwnedByUser,
+                    {
+                      package_type: packageType,
+                      package_name: packageName,
+                      username: owner,
+                      per_page: 100,
+                    },
+                  ),
+                };
+              }
+            };
+
+            const deleteVersion = async (scope, versionId) => {
+              if (scope === 'org') {
+                await github.rest.packages.deletePackageVersionForOrg({
+                  package_type: packageType,
+                  package_name: packageName,
+                  org: owner,
+                  package_version_id: versionId,
+                });
+                return;
+              }
+
+              await github.rest.packages.deletePackageVersionForUser({
+                package_type: packageType,
+                package_name: packageName,
+                username: owner,
+                package_version_id: versionId,
+              });
+            };
+
+            const { scope, versions } = await paginateVersions();
+            const sortedVersions = [...versions].sort(
+              (left, right) => new Date(right.updated_at) - new Date(left.updated_at),
+            );
+
+            if (sortedVersions.length <= 1) {
+              core.info('Skipping age-based cleanup because only one package version exists.');
+              return;
+            }
+
+            let retainedCount = sortedVersions.length;
+
+            for (const [index, version] of sortedVersions.entries()) {
+              const updatedAt = new Date(version.updated_at);
+              const tags = version.metadata?.container?.tags ?? [];
+              const isNewest = index === 0;
+              const isOlderThanRetention = updatedAt < cutoff;
+
+              if (!isOlderThanRetention) {
+                core.info(`Keeping version ${version.id}; updated ${version.updated_at} is within ${retentionDays} days.`);
+                continue;
+              }
+
+              if (isNewest || retainedCount <= 1) {
+                core.info(`Keeping version ${version.id} to ensure at least one image remains available.`);
+                continue;
+              }
+
+              core.info(
+                `${dryRun ? 'Would delete' : 'Deleting'} version ${version.id} updated ${version.updated_at} with tags: ${tags.join(', ') || '(none)'}`,
+              );
+              if (!dryRun) {
+                await deleteVersion(scope, version.id);
+              }
+              retainedCount -= 1;
+            }
+
+  cleanup-sha-only:
+    needs: cleanup-by-age
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete container versions that only have SHA tags
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const packageType = process.env.PACKAGE_TYPE;
+            const packageName = process.env.PACKAGE_NAME;
+            const dryRun = process.env.DRY_RUN === 'true';
+
+            const paginateVersions = async () => {
+              try {
+                return {
+                  scope: 'org',
+                  versions: await github.paginate(
+                    github.rest.packages.getAllPackageVersionsForPackageOwnedByOrg,
+                    {
+                      package_type: packageType,
+                      package_name: packageName,
+                      org: owner,
+                      per_page: 100,
+                    },
+                  ),
+                };
+              } catch (error) {
+                if (error.status !== 404) {
+                  throw error;
+                }
+
+                return {
+                  scope: 'user',
+                  versions: await github.paginate(
+                    github.rest.packages.getAllPackageVersionsForPackageOwnedByUser,
+                    {
+                      package_type: packageType,
+                      package_name: packageName,
+                      username: owner,
+                      per_page: 100,
+                    },
+                  ),
+                };
+              }
+            };
+
+            const deleteVersion = async (scope, versionId) => {
+              if (scope === 'org') {
+                await github.rest.packages.deletePackageVersionForOrg({
+                  package_type: packageType,
+                  package_name: packageName,
+                  org: owner,
+                  package_version_id: versionId,
+                });
+                return;
+              }
+
+              await github.rest.packages.deletePackageVersionForUser({
+                package_type: packageType,
+                package_name: packageName,
+                username: owner,
+                package_version_id: versionId,
+              });
+            };
+
+            const isShaTag = (value) => /^sha-[0-9a-f]{7,}$/i.test(value);
+            const { scope, versions } = await paginateVersions();
+            const sortedVersions = [...versions].sort(
+              (left, right) => new Date(right.updated_at) - new Date(left.updated_at),
+            );
+
+            if (sortedVersions.length <= 1) {
+              core.info('Skipping SHA-only cleanup because only one package version exists.');
+              return;
+            }
+
+            let retainedCount = sortedVersions.length;
+
+            for (const [index, version] of sortedVersions.entries()) {
+              const tags = version.metadata?.container?.tags ?? [];
+              const isShaOnly = tags.length > 0 && tags.every(isShaTag);
+              const isNewest = index === 0;
+
+              if (!isShaOnly) {
+                core.info(`Keeping version ${version.id} with tags: ${tags.join(', ') || '(none)'}`);
+                continue;
+              }
+
+              if (isNewest || retainedCount <= 1) {
+                core.info(`Keeping version ${version.id} to ensure at least one image remains available.`);
+                continue;
+              }
+
+              core.info(`${dryRun ? 'Would delete' : 'Deleting'} version ${version.id} with SHA-only tags: ${tags.join(', ')}`);
+              if (!dryRun) {
+                await deleteVersion(scope, version.id);
+              }
+              retainedCount -= 1;
+            }
