@@ -88,9 +88,6 @@ ENV ENGRAM_DATA_DIR=/home/bun/.local/share/opencode/engram
 
 ENV AGENT_BROWSER_ENGINE=lightpanda
 
-# hadolint ignore=DL3045
-COPY git-export.py git-export.py
-
 # hadolint ignore=DL3003,SC2164
 RUN <<'FOE'
 
@@ -178,30 +175,20 @@ chown -Rh bun:bun "$(echo ~bun)"
 
 FOE
 
+# hadolint ignore=DL3045
+COPY scripts /tmp/scripts
+COPY skills.yaml /tmp/skills.yaml
+
 RUN <<'FOE'
-   source /etc/bash.bashrc
+source /etc/bash.bashrc
 
-   skills_dir="${OPENCODE_CONFIG_DIR}/skills"
-   mkdir -p "${skills_dir}"
+BUN_INSTALL=/tmp/bun bun install --cwd /tmp/scripts yaml || exit 1
+bun /tmp/scripts/install-skills.ts || exit 1
 
-   skill_name="humanizer"
-   mkdir -p "${skills_dir}/${skill_name}"
-   curl -L 'https://raw.githubusercontent.com/blader/humanizer/refs/heads/main/SKILL.md' -o "${skills_dir}/${skill_name}/SKILL.md"
+rm -rf /tmp/*
 
-   uv pip install --system "aleph-rlm[mcp]"
-   skill_name="aleph"
-   mkdir -p "${skills_dir}/${skill_name}"
-   curl -L 'https://raw.githubusercontent.com/Hmbown/aleph/refs/heads/main/docs/prompts/aleph.md' -o "${skills_dir}/${skill_name}/SKILL.md"
 
-   skill_name="changelog"
-   python git-export.py "https://github.com/sickn33/antigravity-awesome-skills/skills/changelog-automation" "${skills_dir}/${skill_name}" --force
-
-   skill_name="agent-browser"
-   python git-export.py "https://github.com/vercel-labs/agent-browser/tree/main/skills/${skill_name}" "${skills_dir}/${skill_name}" --force
-
-   rm -f git-export.py
-
-   cat >"${OPENCODE_CONFIG_DIR}/opencode.json" <<-'EOF'
+cat >"${OPENCODE_CONFIG_DIR}/opencode.json" <<-'EOF'
 {
   "$schema": "https://opencode.ai/config.json",
   "plugin": [
@@ -260,8 +247,8 @@ EOF
 
 FOE
 
-COPY --chmod=0555 entrypoint.sh /entrypoint.sh
-COPY --chmod=0555 convert-gemini.auth.ts /usr/local/bin/convert-gemini.auth.ts
+COPY --chmod=0555 scripts/entrypoint.sh /entrypoint.sh
+COPY --chmod=0555 scripts/convert-gemini.auth.ts /usr/local/bin/convert-gemini.auth.ts
 
 USER bun:bun
 

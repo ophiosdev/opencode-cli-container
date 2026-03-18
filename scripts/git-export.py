@@ -31,13 +31,21 @@ def info(message: str) -> None:
     print(f"[git-export] {message}", flush=True)
 
 
-def run_git(git_bin: str, args: list[str], cwd: Path | None = None, verbose: bool = False) -> None:
+def run_git(
+    git_bin: str, args: list[str], cwd: Path | None = None, verbose: bool = False
+) -> None:
     cmd = [git_bin, *args]
     if verbose:
         location = str(cwd) if cwd else os.getcwd()
         print(f"+ (cwd={location}) {' '.join(cmd)}")
     try:
-        subprocess.run(cmd, cwd=str(cwd) if cwd else None, check=True, text=True, capture_output=True)
+        subprocess.run(
+            cmd,
+            cwd=str(cwd) if cwd else None,
+            check=True,
+            text=True,
+            capture_output=True,
+        )
     except subprocess.CalledProcessError as e:
         stderr = (e.stderr or "").strip()
         stdout = (e.stdout or "").strip()
@@ -65,14 +73,16 @@ def parse_github_directory_url(url: str) -> tuple[str, str, str | None]:
     - https://github.com/org/repo/blob/main/lang/ruby
     """
     parsed = urllib.parse.urlparse(url)
-    if parsed.scheme not in ("http", "https") or parsed.netloc not in ("github.com", "www.github.com"):
+    if parsed.scheme not in ("http", "https") or parsed.netloc not in (
+        "github.com",
+        "www.github.com",
+    ):
         raise GitExportError(f"Not a supported GitHub URL: {url}")
 
     parts = [p for p in parsed.path.split("/") if p]
     if len(parts) < 3:
         raise GitExportError(
-            "GitHub URL must include a directory path after owner/repo "
-            f"(got: {url})"
+            f"GitHub URL must include a directory path after owner/repo (got: {url})"
         )
 
     owner = parts[0]
@@ -87,8 +97,7 @@ def parse_github_directory_url(url: str) -> tuple[str, str, str | None]:
     if rest[0] in ("tree", "blob"):
         if len(rest) < 3:
             raise GitExportError(
-                "tree/blob URLs must include ref and directory path, "
-                f"got: {url}"
+                f"tree/blob URLs must include ref and directory path, got: {url}"
             )
         ref = rest[1]
         source = "/".join(rest[2:])
@@ -171,8 +180,18 @@ def export_directory(
 
         info("Step 2/6: configuring sparse checkout")
         step_start = time.perf_counter()
-        run_git(git_bin, ["sparse-checkout", "init", "--cone"], cwd=clone_dir, verbose=verbose)
-        run_git(git_bin, ["sparse-checkout", "set", "--", source_path], cwd=clone_dir, verbose=verbose)
+        run_git(
+            git_bin,
+            ["sparse-checkout", "init", "--cone"],
+            cwd=clone_dir,
+            verbose=verbose,
+        )
+        run_git(
+            git_bin,
+            ["sparse-checkout", "set", "--", source_path],
+            cwd=clone_dir,
+            verbose=verbose,
+        )
         info(f"Step 2/6 complete in {time.perf_counter() - step_start:.1f}s")
 
         info("Step 3/6: checking out requested ref/path")
@@ -184,7 +203,12 @@ def export_directory(
                 cwd=clone_dir,
                 verbose=verbose,
             )
-            run_git(git_bin, ["checkout", "--detach", "FETCH_HEAD"], cwd=clone_dir, verbose=verbose)
+            run_git(
+                git_bin,
+                ["checkout", "--detach", "FETCH_HEAD"],
+                cwd=clone_dir,
+                verbose=verbose,
+            )
         else:
             run_git(git_bin, ["checkout"], cwd=clone_dir, verbose=verbose)
         info(f"Step 3/6 complete in {time.perf_counter() - step_start:.1f}s")
@@ -215,114 +239,68 @@ def export_directory(
             copy_entry(child, output_dir / child.name)
         info(f"Step 6/6 complete in {time.perf_counter() - step_start:.1f}s")
 
-    # Explicitly ensure .git is never left in output.
     info("Finalizing export (removing .git if present)")
     shutil.rmtree(output_dir / ".git", ignore_errors=True)
-    info(f"All done in {time.perf_counter() - start_total:.1f}s")
+    info(f"Export complete in {time.perf_counter() - start_total:.1f}s")
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description=(
-            "Export one directory from a huge Git repository using treeless + sparse clone."
-        )
+        description="Export a directory from a GitHub repository"
     )
+    parser.add_argument("source", help="GitHub directory URL or repo URL")
+    parser.add_argument("output", help="Output directory path")
+    parser.add_argument("--ref", default=None, help="Git ref to checkout")
     parser.add_argument(
-        "input",
-        help=(
-            "Either a repository URL (legacy mode) or a full GitHub directory URL, "
-            "e.g. https://github.com/apache/avro/lang/ruby"
-        ),
+        "--path",
+        default=None,
+        help="Directory path inside the repo (required for raw repo URLs)",
     )
+    parser.add_argument("--depth", type=int, default=1, help="Clone depth (default: 1)")
+    parser.add_argument("--git", default="git", help="Git binary to use (default: git)")
     parser.add_argument(
-        "arg2",
-        help=(
-            "In URL mode: destination output directory. "
-            "In legacy mode: source directory path."
-        ),
+        "--force", action="store_true", help="Overwrite output if it exists"
     )
-    parser.add_argument(
-        "arg3",
-        nargs="?",
-        help="Legacy mode only: destination output directory.",
-    )
-    parser.add_argument(
-        "--source",
-        help=(
-            "Source directory path when using 2-arg mode with a repository URL input."
-        ),
-    )
-    parser.add_argument(
-        "--ref",
-        "-r",
-        help="Branch/tag/ref to export (default: repository default branch)",
-    )
-    parser.add_argument(
-        "--depth",
-        type=int,
-        default=1,
-        help="Fetch depth for clone/fetch (default: 1)",
-    )
-    parser.add_argument(
-        "--force",
-        "-f",
-        action="store_true",
-        help="Overwrite output directory if it already exists",
-    )
-    parser.add_argument(
-        "--git-bin",
-        default="git",
-        help="Git binary path/name (default: git)",
-    )
-    parser.add_argument(
-        "--verbose",
-        "-v",
-        action="store_true",
-        help="Print git commands while running",
-    )
+    parser.add_argument("--verbose", action="store_true", help="Print git commands")
+    return parser
 
-    args = parser.parse_args()
 
-    if args.depth < 1:
-        print("Error: --depth must be >= 1", file=sys.stderr)
-        return 2
+def main(argv: list[str]) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    output_dir = Path(args.output)
 
     try:
-        parsed_ref: str | None = None
-        if args.arg3 is not None:
-            # Legacy mode: repo source output
-            repo_url = args.input
-            source_path = args.arg2
-            output_path = args.arg3
+        if args.source.startswith("https://github.com/"):
+            repo_url, source_path, inferred_ref = parse_github_directory_url(
+                args.source
+            )
+            ref = args.ref if args.ref is not None else inferred_ref
         else:
-            # URL mode: input output
-            output_path = args.arg2
-            if args.source:
-                repo_url = args.input
-                source_path = args.source
-            else:
-                repo_url, source_path, parsed_ref = parse_github_directory_url(args.input)
+            if not args.path:
+                raise GitExportError(
+                    "--path is required when source is not a GitHub directory URL"
+                )
+            repo_url = args.source
+            source_path = normalize_source_path(args.path)
+            ref = args.ref
 
         export_directory(
             repo_url=repo_url,
             source_path=source_path,
-            output_dir=Path(output_path),
-            ref=args.ref or parsed_ref,
+            output_dir=output_dir,
+            ref=ref,
             depth=args.depth,
             force=args.force,
-            git_bin=args.git_bin,
+            git_bin=args.git,
             verbose=args.verbose,
         )
+        return 0
     except GitExportError as e:
         print(f"Error: {e}", file=sys.stderr)
-        return 1
-    except FileNotFoundError as e:
-        print(f"Error: unable to execute git binary '{args.git_bin}': {e}", file=sys.stderr)
-        return 1
-
-    print(f"Export complete: {Path(output_path).resolve()}")
-    return 0
+        return 2
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))
