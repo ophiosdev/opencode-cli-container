@@ -63,9 +63,9 @@ def normalize_source_path(path: str) -> str:
     return "/".join(parts)
 
 
-def parse_github_directory_url(url: str) -> tuple[str, str, str | None]:
+def parse_github_directory_url(url: str) -> tuple[str, str | None, str | None]:
     """
-    Parse a GitHub directory URL into (repo_url, source_path, ref).
+    Parse a GitHub URL into (repo_url, source_path, ref).
 
     Supported examples:
     - https://github.com/org/repo/lang/ruby
@@ -80,10 +80,8 @@ def parse_github_directory_url(url: str) -> tuple[str, str, str | None]:
         raise GitExportError(f"Not a supported GitHub URL: {url}")
 
     parts = [p for p in parsed.path.split("/") if p]
-    if len(parts) < 3:
-        raise GitExportError(
-            f"GitHub URL must include a directory path after owner/repo (got: {url})"
-        )
+    if len(parts) < 2:
+        raise GitExportError(f"GitHub URL must include owner/repo (got: {url})")
 
     owner = parts[0]
     repo = parts[1]
@@ -92,9 +90,11 @@ def parse_github_directory_url(url: str) -> tuple[str, str, str | None]:
 
     rest = parts[2:]
     ref: str | None = None
-    source: str
+    source: str | None = None
 
-    if rest[0] in ("tree", "blob"):
+    if not rest:
+        source = None
+    elif rest[0] in ("tree", "blob"):
         if len(rest) < 3:
             raise GitExportError(
                 f"tree/blob URLs must include ref and directory path, got: {url}"
@@ -105,7 +105,8 @@ def parse_github_directory_url(url: str) -> tuple[str, str, str | None]:
         source = "/".join(rest)
 
     repo_url = f"https://github.com/{owner}/{repo}.git"
-    return repo_url, normalize_source_path(source), ref
+    normalized_source = normalize_source_path(source) if source is not None else None
+    return repo_url, normalized_source, ref
 
 
 def prepare_output_dir(output_dir: Path, force: bool) -> None:
@@ -148,11 +149,11 @@ def export_directory(
     verbose: bool,
 ) -> None:
     start_total = time.perf_counter()
-    source_path = normalize_source_path(source_path)
+    source_path = source_path.strip("/")
     output_dir = output_dir.resolve()
 
     info(f"Repository: {repo_url}")
-    info(f"Source path: {source_path}")
+    info(f"Source path: {source_path or '(repo root)'}")
     info(f"Ref: {ref or 'default branch'}")
     info(f"Output: {output_dir}")
 
@@ -186,12 +187,20 @@ def export_directory(
             cwd=clone_dir,
             verbose=verbose,
         )
-        run_git(
-            git_bin,
-            ["sparse-checkout", "set", "--", source_path],
-            cwd=clone_dir,
-            verbose=verbose,
-        )
+        if source_path:
+            run_git(
+                git_bin,
+                ["sparse-checkout", "set", "--", source_path],
+                cwd=clone_dir,
+                verbose=verbose,
+            )
+        else:
+            run_git(
+                git_bin,
+                ["sparse-checkout", "disable"],
+                cwd=clone_dir,
+                verbose=verbose,
+            )
         info(f"Step 2/6 complete in {time.perf_counter() - step_start:.1f}s")
 
         info("Step 3/6: checking out requested ref/path")
@@ -214,10 +223,10 @@ def export_directory(
         info(f"Step 3/6 complete in {time.perf_counter() - step_start:.1f}s")
 
         info("Step 4/6: validating source directory")
-        source_dir = clone_dir / source_path
+        source_dir = clone_dir if not source_path else clone_dir / source_path
         if not source_dir.exists() or not source_dir.is_dir():
             raise GitExportError(
-                f"Source directory not found after checkout: {source_path}\n"
+                f"Source directory not found after checkout: {source_path or '.'}\n"
                 f"Repository: {repo_url}\n"
                 f"Ref: {ref or 'default branch'}"
             )
@@ -235,6 +244,9 @@ def export_directory(
         if total_children == 0:
             info("Source directory is empty")
         for idx, child in enumerate(children, start=1):
+            if child.name == ".git":
+                info(f"  - [{idx}/{total_children}] {child.name} (skipped)")
+                continue
             info(f"  - [{idx}/{total_children}] {child.name}")
             copy_entry(child, output_dir / child.name)
         info(f"Step 6/6 complete in {time.perf_counter() - step_start:.1f}s")
@@ -276,6 +288,8 @@ def main(argv: list[str]) -> int:
             repo_url, source_path, inferred_ref = parse_github_directory_url(
                 args.source
             )
+            if source_path is None:
+                source_path = normalize_source_path(args.path) if args.path else ""
             ref = args.ref if args.ref is not None else inferred_ref
         else:
             if not args.path:
