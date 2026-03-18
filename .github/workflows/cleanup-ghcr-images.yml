@@ -27,7 +27,7 @@ jobs:
   cleanup:
     runs-on: ubuntu-latest
     steps:
-      - name: Delete old container versions but keep one
+      - name: Delete old container versions
         id: cleanup_by_age
         uses: actions/github-script@v8
         env:
