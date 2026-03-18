@@ -19,7 +19,6 @@ permissions:
   packages: write
 
 env:
-  PACKAGE_TYPE: container
   PACKAGE_NAME: opencode-cli
   RETENTION_DAYS: ${{ inputs.retention_days || vars.GHCR_RETENTION_DAYS || '45' }}
   DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
@@ -30,10 +29,14 @@ jobs:
     steps:
       - name: Delete old container versions but keep one
         uses: actions/github-script@v8
+        env:
+          PACKAGE_NAME: ${{ env.PACKAGE_NAME }}
+          RETENTION_DAYS: ${{ env.RETENTION_DAYS }}
+          DRY_RUN: ${{ env.DRY_RUN }}
         with:
           script: |
             const owner = context.repo.owner;
-            const packageType = process.env.PACKAGE_TYPE;
+            const packageType = 'container';
             const packageName = process.env.PACKAGE_NAME;
             const retentionDays = Number(process.env.RETENTION_DAYS);
             const dryRun = process.env.DRY_RUN === 'true';
@@ -135,10 +138,13 @@ jobs:
     steps:
       - name: Delete container versions that only have SHA tags
         uses: actions/github-script@v8
+        env:
+          PACKAGE_NAME: ${{ env.PACKAGE_NAME }}
+          DRY_RUN: ${{ env.DRY_RUN }}
         with:
           script: |
             const owner = context.repo.owner;
-            const packageType = process.env.PACKAGE_TYPE;
+            const packageType = 'container';
             const packageName = process.env.PACKAGE_NAME;
             const dryRun = process.env.DRY_RUN === 'true';
 
