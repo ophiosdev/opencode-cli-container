@@ -81,6 +81,7 @@ FOE
 ARG OPENCODE_VERSION=latest
 ARG AZURE_FOUNDRY_PROVIDER_VERSION=0.2.0
 ARG ENGRAM_VERSION=latest
+ARG OPENCODE_BUILD_DIR=/usr/local/share/opencode-build
 
 ENV OPENCODE_CONFIG_DIR=/etc/opencode
 ENV OPENCODE_EXPERIMENTAL=1
@@ -176,16 +177,16 @@ chown -Rh bun:bun "$(echo ~bun)"
 FOE
 
 # hadolint ignore=DL3045
-COPY scripts /tmp/scripts
-COPY skills.yaml /tmp/skills.yaml
+COPY scripts "${OPENCODE_BUILD_DIR}/scripts"
+COPY skills.yaml "${OPENCODE_BUILD_DIR}/skills.yaml"
 
 RUN <<'FOE'
 source /etc/bash.bashrc
 
-BUN_INSTALL=/tmp/bun bun install --cwd /tmp/scripts yaml || exit 1
-bun /tmp/scripts/install-skills.ts || exit 1
+BUN_INSTALL=/tmp/bun bun install --cwd "${OPENCODE_BUILD_DIR}/scripts" yaml || exit 1
+bun "${OPENCODE_BUILD_DIR}/scripts/install-skills.ts" || exit 1
 
-rm -rf /tmp/*
+rm -rf "${OPENCODE_BUILD_DIR}"
 
 
 cat >"${OPENCODE_CONFIG_DIR}/opencode.json" <<-'EOF'
