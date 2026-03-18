@@ -32,6 +32,8 @@ jobs:
         with:
           files: |
             Dockerfile
+            skills.yaml
+            scripts/**
 
       - name: Setup toolchain with mise
         uses: jdx/mise-action@v2
@@ -39,7 +41,7 @@ jobs:
       - name: Run prek hooks
         run: prek run --all-files --show-diff-on-failure --color=always
 
-      - name: Build Docker image if Dockerfile changed
+      - name: Build Docker image if Docker assets changed
         if: steps.changed-files.outputs.any_changed == 'true'
         run: |
           docker build -t opencode-cli-pr:latest .
