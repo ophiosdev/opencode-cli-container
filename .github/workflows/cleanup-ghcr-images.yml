@@ -19,25 +19,31 @@ permissions:
   packages: write
 
 env:
-  PACKAGE_TYPE: container
   PACKAGE_NAME: opencode-cli
   RETENTION_DAYS: ${{ inputs.retention_days || vars.GHCR_RETENTION_DAYS || '45' }}
   DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
 
 jobs:
-  cleanup-by-age:
+  cleanup:
     runs-on: ubuntu-latest
     steps:
-      - name: Delete old container versions but keep one
+      - name: Delete old container versions
+        id: cleanup_by_age
         uses: actions/github-script@v8
+        env:
+          PACKAGE_NAME: ${{ env.PACKAGE_NAME }}
+          RETENTION_DAYS: ${{ env.RETENTION_DAYS }}
+          DRY_RUN: ${{ env.DRY_RUN }}
         with:
+          result-encoding: string
           script: |
             const owner = context.repo.owner;
-            const packageType = process.env.PACKAGE_TYPE;
+            const packageType = 'container';
             const packageName = process.env.PACKAGE_NAME;
             const retentionDays = Number(process.env.RETENTION_DAYS);
             const dryRun = process.env.DRY_RUN === 'true';
             const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+            const deletedVersionIds = [];
 
             const paginateVersions = async () => {
               try {
@@ -99,7 +105,7 @@ jobs:
 
             if (sortedVersions.length <= 1) {
               core.info('Skipping age-based cleanup because only one package version exists.');
-              return;
+              return JSON.stringify(deletedVersionIds);
             }
 
             let retainedCount = sortedVersions.length;
@@ -126,19 +132,22 @@ jobs:
               if (!dryRun) {
                 await deleteVersion(scope, version.id);
               }
+              deletedVersionIds.push(version.id);
               retainedCount -= 1;
             }
 
-  cleanup-sha-only:
-    needs: cleanup-by-age
-    runs-on: ubuntu-latest
-    steps:
+            return JSON.stringify(deletedVersionIds);
+
       - name: Delete container versions that only have SHA tags
         uses: actions/github-script@v8
+        env:
+          PACKAGE_NAME: ${{ env.PACKAGE_NAME }}
+          DRY_RUN: ${{ env.DRY_RUN }}
+          DELETED_VERSION_IDS: ${{ steps.cleanup_by_age.outputs.result }}
         with:
           script: |
             const owner = context.repo.owner;
-            const packageType = process.env.PACKAGE_TYPE;
+            const packageType = 'container';
             const packageName = process.env.PACKAGE_NAME;
             const dryRun = process.env.DRY_RUN === 'true';
 
@@ -201,14 +210,23 @@ jobs:
               (left, right) => new Date(right.updated_at) - new Date(left.updated_at),
             );
 
-            if (sortedVersions.length <= 1) {
-              core.info('Skipping SHA-only cleanup because only one package version exists.');
+            let remainingVersions = sortedVersions;
+
+            if (dryRun) {
+              const deletedVersionIds = new Set(JSON.parse(process.env.DELETED_VERSION_IDS || '[]').map(String));
+              core.info('Dry run enabled; excluding versions marked by the age-based cleanup step from SHA-only evaluation.');
+
+              remainingVersions = sortedVersions.filter((version) => !deletedVersionIds.has(String(version.id)));
+            }
+
+            if (remainingVersions.length <= 1) {
+              core.info('Skipping SHA-only cleanup because only one package version would remain after age-based cleanup.');
               return;
             }
 
-            let retainedCount = sortedVersions.length;
+            let retainedCount = remainingVersions.length;
 
-            for (const [index, version] of sortedVersions.entries()) {
+            for (const [index, version] of remainingVersions.entries()) {
               const tags = version.metadata?.container?.tags ?? [];
               const isShaOnly = tags.length > 0 && tags.every(isShaTag);
               const isNewest = index === 0;
