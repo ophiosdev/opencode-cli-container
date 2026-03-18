@@ -331,7 +331,7 @@ opencodec
 
 ## Included Tooling and Skills
 
-The image currently installs or bundles the following pieces during build:
+The build bundles these tools and skills:
 
 - `opencode-ai`
 - `mise`
@@ -347,9 +347,9 @@ The image currently installs or bundles the following pieces during build:
 - `git`
 - `sudo`, `curl`, `gpg`, `make`
 - Azure Foundry provider build output
-- OpenCode skills for `humanizer`, `aleph`, and changelog automation
+- OpenCode skills for `stop-slop`, `aleph`, and changelog automation
 
-The repository also includes `git-export.py`, a helper script that exports a single directory from
+The repository also includes `git-export.ts`, a Bun helper script that exports a single directory from
 a GitHub repository using a treeless, sparse clone workflow.
 
 ## Release Model
@@ -364,7 +364,7 @@ This repo publishes container images to GitHub Container Registry from version t
 
 - `Dockerfile`: Builds the OpenCode container image and installs providers, tools, and skills
 - `entrypoint.sh`: Loads shell environment and starts `opencode`
-- `git-export.py`: Sparse GitHub directory export helper
+- `git-export.ts`: Sparse GitHub directory export helper
 - `Makefile`: Convenience targets for local image build and cleanup
 - `.github/workflows/`: PR validation, release sync, and registry publishing workflows
 - `.mise.toml`: Local tool definitions for linting and validation utilities

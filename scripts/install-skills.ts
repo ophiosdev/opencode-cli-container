@@ -21,7 +21,7 @@ const cfg = process.env.OPENCODE_CONFIG_DIR || "/etc/opencode"
 const root = path.join(cfg, "skills")
 const base = process.env.OPENCODE_BUILD_DIR || "/tmp"
 const manifestPath = process.env.SKILLS_MANIFEST || path.join(base, "skills.yaml")
-const gitExport = process.env.GIT_EXPORT_SCRIPT || path.join(base, "scripts", "git-export.py")
+const gitExport = process.env.GIT_EXPORT_SCRIPT || path.join(base, "scripts", "git-export.ts")
 
 function fail(msg: string): never {
   throw new Error(`[install-skills] ${msg}`)
@@ -59,7 +59,7 @@ async function run(name: string, step: Step, dir: string) {
 
   if (step.type === "git-export") {
     await ensure(dir)
-    await shell(["python", gitExport, step.url, dir, "--force"])
+    await shell(["bun", gitExport, step.url, dir, "--force"])
     return
   }
 

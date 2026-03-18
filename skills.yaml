@@ -1,9 +1,8 @@
 skills:
-  - name: humanizer
+  - name: stop-slop
     steps:
-      - type: download
-        url: https://raw.githubusercontent.com/blader/humanizer/refs/heads/main/SKILL.md
-        dest: SKILL.md
+      - type: git-export
+        url: https://github.com/hardikpandya/stop-slop
 
   - name: aleph
     steps:

@@ -3,6 +3,6 @@
 !skills.yaml
 !scripts/
 !scripts/entrypoint.sh
-!scripts/git-export.py
+!scripts/git-export.ts
 !scripts/convert-gemini.auth.ts
 !scripts/install-skills.ts
