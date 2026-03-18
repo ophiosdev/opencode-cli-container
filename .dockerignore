@@ -1,5 +1,8 @@
 *
 !Dockerfile
-!entrypoint.sh
-!git-export.py
-!convert-gemini.auth.ts
+!skills.yaml
+!scripts/
+!scripts/entrypoint.sh
+!scripts/git-export.py
+!scripts/convert-gemini.auth.ts
+!scripts/install-skills.ts

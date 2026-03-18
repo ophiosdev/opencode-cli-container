@@ -1,0 +1,25 @@
+skills:
+  - name: humanizer
+    steps:
+      - type: download
+        url: https://raw.githubusercontent.com/blader/humanizer/refs/heads/main/SKILL.md
+        dest: SKILL.md
+
+  - name: aleph
+    steps:
+      - type: uv-pip
+        packages:
+          - aleph-rlm[mcp]
+      - type: download
+        url: https://raw.githubusercontent.com/Hmbown/aleph/refs/heads/main/docs/prompts/aleph.md
+        dest: SKILL.md
+
+  - name: changelog
+    steps:
+      - type: git-export
+        url: https://github.com/sickn33/antigravity-awesome-skills/skills/changelog-automation
+
+  - name: agent-browser
+    steps:
+      - type: git-export
+        url: https://github.com/vercel-labs/agent-browser/tree/main/skills/agent-browser
