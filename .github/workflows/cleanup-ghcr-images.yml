@@ -5,10 +5,19 @@ on:
     - cron: '0 3 * * *'
   workflow_dispatch:
     inputs:
+      images_to_keep:
+        description: Keep this many newest non-SHA-only image versions
+        required: false
+        default: '4'
       retention_days:
-        description: Delete image versions older than this many days
+        description: Delete non-SHA-only image versions older than this many days
         required: false
         default: ''
+      delete_sha_only_tags:
+        description: Delete image versions that only have SHA tags
+        required: false
+        type: boolean
+        default: true
       dry_run:
         description: Log deletions without removing image versions
         required: false
@@ -20,7 +29,9 @@ permissions:
 
 env:
   PACKAGE_NAME: opencode-cli
+  IMAGES_TO_KEEP: ${{ inputs.images_to_keep || vars.GHCR_IMAGES_TO_KEEP || '4' }}
   RETENTION_DAYS: ${{ inputs.retention_days || vars.GHCR_RETENTION_DAYS || '45' }}
+  DELETE_SHA_ONLY_TAGS: ${{ github.event_name == 'workflow_dispatch' && inputs.delete_sha_only_tags || vars.GHCR_DELETE_SHA_ONLY_TAGS || 'true' }}
   DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
 
 jobs:
@@ -32,6 +43,7 @@ jobs:
         uses: actions/github-script@v8
         env:
           PACKAGE_NAME: ${{ env.PACKAGE_NAME }}
+          IMAGES_TO_KEEP: ${{ env.IMAGES_TO_KEEP }}
           RETENTION_DAYS: ${{ env.RETENTION_DAYS }}
           DRY_RUN: ${{ env.DRY_RUN }}
         with:
@@ -40,10 +52,19 @@ jobs:
             const owner = context.repo.owner;
             const packageType = 'container';
             const packageName = process.env.PACKAGE_NAME;
+            const imagesToKeep = Math.max(1, Number(process.env.IMAGES_TO_KEEP || '4'));
             const retentionDays = Number(process.env.RETENTION_DAYS);
             const dryRun = process.env.DRY_RUN === 'true';
             const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
             const deletedVersionIds = [];
+
+            if (!Number.isFinite(imagesToKeep)) {
+              throw new Error(`IMAGES_TO_KEEP must be a number, received: ${process.env.IMAGES_TO_KEEP}`);
+            }
+
+            if (!Number.isFinite(retentionDays)) {
+              throw new Error(`RETENTION_DAYS must be a number, received: ${process.env.RETENTION_DAYS}`);
+            }
 
             const paginateVersions = async () => {
               try {
@@ -98,31 +119,46 @@ jobs:
               });
             };
 
+            const isShaTag = (value) => /^sha-[0-9a-f]{7,}$/i.test(value);
+            const isShaOnlyVersion = (version) => {
+              const tags = version.metadata?.container?.tags ?? [];
+              return tags.length > 0 && tags.every(isShaTag);
+            };
+
             const { scope, versions } = await paginateVersions();
             const sortedVersions = [...versions].sort(
               (left, right) => new Date(right.updated_at) - new Date(left.updated_at),
             );
+            const nonShaOnlyVersions = sortedVersions.filter((version) => !isShaOnlyVersion(version));
 
-            if (sortedVersions.length <= 1) {
-              core.info('Skipping age-based cleanup because only one package version exists.');
+            if (nonShaOnlyVersions.length <= imagesToKeep) {
+              core.info(`Skipping age-based cleanup because ${nonShaOnlyVersions.length} non-SHA-only package version(s) do not exceed the keep limit of ${imagesToKeep}.`);
               return JSON.stringify(deletedVersionIds);
             }
 
-            let retainedCount = sortedVersions.length;
+            let retainedNonShaOnlyCount = nonShaOnlyVersions.length;
+            let retainedNewestNonShaOnly = 0;
 
-            for (const [index, version] of sortedVersions.entries()) {
+            for (const version of sortedVersions) {
               const updatedAt = new Date(version.updated_at);
               const tags = version.metadata?.container?.tags ?? [];
-              const isNewest = index === 0;
+              const isShaOnly = isShaOnlyVersion(version);
               const isOlderThanRetention = updatedAt < cutoff;
 
-              if (!isOlderThanRetention) {
-                core.info(`Keeping version ${version.id}; updated ${version.updated_at} is within ${retentionDays} days.`);
+              if (isShaOnly) {
+                core.info(`Skipping age-based keep-count evaluation for SHA-only version ${version.id} with tags: ${tags.join(', ')}`);
                 continue;
               }
 
-              if (isNewest || retainedCount <= 1) {
-                core.info(`Keeping version ${version.id} to ensure at least one image remains available.`);
+              if (!isOlderThanRetention) {
+                core.info(`Keeping version ${version.id}; updated ${version.updated_at} is within ${retentionDays} days.`);
+                retainedNewestNonShaOnly += 1;
+                continue;
+              }
+
+              if (retainedNewestNonShaOnly < imagesToKeep || retainedNonShaOnlyCount <= imagesToKeep) {
+                core.info(`Keeping version ${version.id} because it is within the newest ${imagesToKeep} non-SHA-only image version(s).`);
+                retainedNewestNonShaOnly += 1;
                 continue;
               }
 
@@ -133,15 +169,17 @@ jobs:
                 await deleteVersion(scope, version.id);
               }
               deletedVersionIds.push(version.id);
-              retainedCount -= 1;
+              retainedNonShaOnlyCount -= 1;
             }
 
             return JSON.stringify(deletedVersionIds);
 
       - name: Delete container versions that only have SHA tags
+        if: ${{ env.DELETE_SHA_ONLY_TAGS == 'true' }}
         uses: actions/github-script@v8
         env:
           PACKAGE_NAME: ${{ env.PACKAGE_NAME }}
+          IMAGES_TO_KEEP: ${{ env.IMAGES_TO_KEEP }}
           DRY_RUN: ${{ env.DRY_RUN }}
           DELETED_VERSION_IDS: ${{ steps.cleanup_by_age.outputs.result }}
         with:
@@ -149,7 +187,12 @@ jobs:
             const owner = context.repo.owner;
             const packageType = 'container';
             const packageName = process.env.PACKAGE_NAME;
+            const imagesToKeep = Math.max(1, Number(process.env.IMAGES_TO_KEEP || '4'));
             const dryRun = process.env.DRY_RUN === 'true';
+
+            if (!Number.isFinite(imagesToKeep)) {
+              throw new Error(`IMAGES_TO_KEEP must be a number, received: ${process.env.IMAGES_TO_KEEP}`);
+            }
 
             const paginateVersions = async () => {
               try {
@@ -219,25 +262,16 @@ jobs:
               remainingVersions = sortedVersions.filter((version) => !deletedVersionIds.has(String(version.id)));
             }
 
-            if (remainingVersions.length <= 1) {
-              core.info('Skipping SHA-only cleanup because only one package version would remain after age-based cleanup.');
+            if (remainingVersions.length === 0) {
+              core.info(`Skipping SHA-only cleanup because there are no remaining package versions to evaluate after the age-based cleanup step.`);
               return;
             }
-
-            let retainedCount = remainingVersions.length;
 
             for (const [index, version] of remainingVersions.entries()) {
               const tags = version.metadata?.container?.tags ?? [];
               const isShaOnly = tags.length > 0 && tags.every(isShaTag);
-              const isNewest = index === 0;
-
               if (!isShaOnly) {
                 core.info(`Keeping version ${version.id} with tags: ${tags.join(', ') || '(none)'}`);
-                continue;
-              }
-
-              if (isNewest || retainedCount <= 1) {
-                core.info(`Keeping version ${version.id} to ensure at least one image remains available.`);
                 continue;
               }
 
