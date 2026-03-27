@@ -38,13 +38,14 @@ jobs:
   cleanup:
     runs-on: ubuntu-latest
     steps:
-      - name: Delete old container versions
-        id: cleanup_by_age
+      - name: Cleanup container versions
+        id: cleanup
         uses: actions/github-script@v8
         env:
           PACKAGE_NAME: ${{ env.PACKAGE_NAME }}
           IMAGES_TO_KEEP: ${{ env.IMAGES_TO_KEEP }}
           RETENTION_DAYS: ${{ env.RETENTION_DAYS }}
+          DELETE_SHA_ONLY_TAGS: ${{ env.DELETE_SHA_ONLY_TAGS }}
           DRY_RUN: ${{ env.DRY_RUN }}
         with:
           result-encoding: string
@@ -54,6 +55,7 @@ jobs:
             const packageName = process.env.PACKAGE_NAME;
             const imagesToKeep = Number(process.env.IMAGES_TO_KEEP || 0);
             const retentionDays = Number(process.env.RETENTION_DAYS || 0);
+            const deleteShaOnly = process.env.DELETE_SHA_ONLY_TAGS === 'true';
             const dryRun = process.env.DRY_RUN === 'true';
             const cutoff = retentionDays > 0 ? new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000) : null;
 
@@ -148,7 +150,6 @@ jobs:
               if (a.major !== b.major) return a.major - b.major;
               if (a.minor !== b.minor) return a.minor - b.minor;
               if (a.patch !== b.patch) return a.patch - b.patch;
-              // Prerelease versions are lower than release
               if (a.prerelease && !b.prerelease) return -1;
               if (!a.prerelease && b.prerelease) return 1;
               if (a.prerelease && b.prerelease) return a.prerelease.localeCompare(b.prerelease);
@@ -161,11 +162,12 @@ jobs:
                 .filter(tag => !isShaTag(tag) && !specialTags.has(tag.toLowerCase()))
                 .map(parseSemver)
                 .filter(Boolean)
-                .sort((a, b) => compareSemver(b, a)); // Highest version first
+                .sort((a, b) => compareSemver(b, a));
               return semverTags[0] || null;
             };
 
             const { scope, versions } = await paginateVersions();
+            core.info(`Found ${versions.length} total versions`);
 
             // Sort by semantic version DESC, then by updated_at DESC as tiebreaker
             const sortedVersions = [...versions].sort((left, right) => {
@@ -176,30 +178,34 @@ jobs:
                 const cmp = compareSemver(rightSemver, leftSemver);
                 if (cmp !== 0) return cmp;
               } else if (leftSemver && !rightSemver) {
-                return -1; // Has version > no version
+                return -1;
               } else if (!leftSemver && rightSemver) {
                 return 1;
               }
-              // Tiebreaker: newer update time first
               return new Date(right.updated_at) - new Date(left.updated_at);
             });
 
+            // Separate SHA-only from regular versions
+            const shaOnlyVersions = sortedVersions.filter(isShaOnlyVersion);
             const nonShaOnlyVersions = sortedVersions.filter(v => !isShaOnlyVersion(v));
 
-            // Step 1: Filter by retention window (if RETENTION_DAYS > 0)
+            core.info(`${shaOnlyVersions.length} SHA-only versions${deleteShaOnly ? ' (will be deleted)' : ''}`);
+            core.info(`${nonShaOnlyVersions.length} non-SHA-only versions to evaluate for retention`);
+
+            // Apply retention filter to non-SHA-only versions
             let candidates = nonShaOnlyVersions;
             if (retentionDays > 0) {
               candidates = nonShaOnlyVersions.filter(v => new Date(v.updated_at) >= cutoff);
               core.info(`Retention filter: ${candidates.length} of ${nonShaOnlyVersions.length} versions within ${retentionDays} days`);
             }
 
-            // Step 2: Cap by IMAGES_TO_KEEP (high water mark, if > 0)
+            // Apply count cap
             if (imagesToKeep > 0 && candidates.length > imagesToKeep) {
               candidates = candidates.slice(0, imagesToKeep);
               core.info(`Count cap: limiting to ${imagesToKeep} newest versions`);
             }
 
-            // Step 3: Safety - ensure at least 1 tagged image
+            // Safety: ensure at least 1 tagged image
             const taggedCandidates = candidates.filter(hasNonShaTag);
             if (taggedCandidates.length === 0) {
               const newestTagged = nonShaOnlyVersions.find(hasNonShaTag);
@@ -211,149 +217,75 @@ jobs:
 
             // Build set of IDs to keep
             const keepIds = new Set(candidates.map(v => v.id));
+            core.info(`Will keep ${keepIds.size} non-SHA-only versions`);
 
-            let deletedCount = 0;
+            // Process all versions in a single pass
+            let shaOnlyDeleted = 0;
+            let shaOnlyRetained = 0;
+            let ageBasedDeleted = 0;
             let retainedCount = 0;
             let retainedTaggedCount = 0;
 
-            for (const version of sortedVersions) {
-              const tags = version.metadata?.container?.tags ?? [];
-              const isShaOnly = isShaOnlyVersion(version);
-
-              if (isShaOnly) {
-                core.info(`Skipping SHA-only version ${version.id} with tags: ${tags.join(', ')}`);
-                continue;
+            core.info('');
+            if (deleteShaOnly) {
+              core.info('=== SHA-only versions (will be deleted) ===');
+              for (const version of shaOnlyVersions) {
+                const tags = version.metadata?.container?.tags ?? [];
+                core.info(`${dryRun ? '[DRY RUN] Would delete' : 'Deleting'} SHA-only version ${version.id} with tags: ${tags.join(', ')}`);
+                if (!dryRun) {
+                  await deleteVersion(scope, version.id);
+                }
+                shaOnlyDeleted += 1;
               }
+            } else {
+              core.info('=== SHA-only versions (skipped - DELETE_SHA_ONLY_TAGS is false) ===');
+              for (const version of shaOnlyVersions) {
+                const tags = version.metadata?.container?.tags ?? [];
+                core.info(`Keeping SHA-only version ${version.id} with tags: ${tags.join(', ')}`);
+                shaOnlyRetained += 1;
+              }
+            }
 
+            core.info('');
+            core.info('=== Non-SHA-only versions ===');
+            for (const version of nonShaOnlyVersions) {
+              const tags = version.metadata?.container?.tags ?? [];
               if (keepIds.has(version.id)) {
                 core.info(`Keeping version ${version.id} with tags: ${tags.join(', ') || '(none)'}`);
                 retainedCount += 1;
                 if (hasNonShaTag(version)) retainedTaggedCount += 1;
               } else {
-                core.info(`${dryRun ? 'Would delete' : 'Deleting'} version ${version.id} updated ${version.updated_at} with tags: ${tags.join(', ') || '(none)'}`);
+                core.info(`${dryRun ? '[DRY RUN] Would delete' : 'Deleting'} version ${version.id} with tags: ${tags.join(', ') || '(none)'}`);
                 if (!dryRun) {
                   await deleteVersion(scope, version.id);
                 }
-                deletedCount += 1;
+                ageBasedDeleted += 1;
               }
             }
 
-            return JSON.stringify({ deletedCount, retainedCount, retainedTaggedCount });
-
-      - name: Delete container versions that only have SHA tags
-        id: cleanup_sha_only
-        if: ${{ env.DELETE_SHA_ONLY_TAGS == 'true' }}
-        uses: actions/github-script@v8
-        env:
-          PACKAGE_NAME: ${{ env.PACKAGE_NAME }}
-          DRY_RUN: ${{ env.DRY_RUN }}
-          AGE_BASED_RESULT: ${{ steps.cleanup_by_age.outputs.result }}
-        with:
-          result-encoding: string
-          script: |
-            const owner = context.repo.owner;
-            const packageType = 'container';
-            const packageName = process.env.PACKAGE_NAME;
-            const dryRun = process.env.DRY_RUN === 'true';
-            const ageBasedResult = JSON.parse(process.env.AGE_BASED_RESULT || '{}');
-
-            const paginateVersions = async () => {
-              try {
-                return {
-                  scope: 'org',
-                  versions: await github.paginate(
-                    github.rest.packages.getAllPackageVersionsForPackageOwnedByOrg,
-                    {
-                      package_type: packageType,
-                      package_name: packageName,
-                      org: owner,
-                      per_page: 100,
-                    },
-                  ),
-                };
-              } catch (error) {
-                if (error.status !== 404) {
-                  throw error;
-                }
-
-                return {
-                  scope: 'user',
-                  versions: await github.paginate(
-                    github.rest.packages.getAllPackageVersionsForPackageOwnedByUser,
-                    {
-                      package_type: packageType,
-                      package_name: packageName,
-                      username: owner,
-                      per_page: 100,
-                    },
-                  ),
-                };
-              }
-            };
-
-            const deleteVersion = async (scope, versionId) => {
-              if (scope === 'org') {
-                await github.rest.packages.deletePackageVersionForOrg({
-                  package_type: packageType,
-                  package_name: packageName,
-                  org: owner,
-                  package_version_id: versionId,
-                });
-                return;
-              }
-
-              await github.rest.packages.deletePackageVersionForUser({
-                package_type: packageType,
-                package_name: packageName,
-                username: owner,
-                package_version_id: versionId,
-              });
-            };
-
-            const isShaTag = (value) => /^sha-[0-9a-f]{7,}$/i.test(value);
-            const { scope, versions } = await paginateVersions();
-            const sortedVersions = [...versions].sort(
-              (left, right) => new Date(right.updated_at) - new Date(left.updated_at),
-            );
-
-            const shaOnlyVersions = sortedVersions.filter(v => {
-              const tags = v.metadata?.container?.tags ?? [];
-              return tags.length > 0 && tags.every(isShaTag);
-            });
-
-            core.info(`Found ${shaOnlyVersions.length} SHA-only versions to evaluate`);
-
-            let shaOnlyDeletedCount = 0;
-
-            for (const version of shaOnlyVersions) {
-              const tags = version.metadata?.container?.tags ?? [];
-              core.info(`${dryRun ? 'Would delete' : 'Deleting'} version ${version.id} with SHA-only tags: ${tags.join(', ')}`);
-              if (!dryRun) {
-                await deleteVersion(scope, version.id);
-              }
-              shaOnlyDeletedCount += 1;
+            core.info('');
+            core.info('=== Summary ===');
+            core.info(`SHA-only deleted: ${shaOnlyDeleted}`);
+            if (!deleteShaOnly) {
+              core.info(`SHA-only retained: ${shaOnlyRetained}`);
             }
-
-            if (shaOnlyDeletedCount > 0) {
-              core.info(`${dryRun ? 'Would delete' : 'Deleted'} ${shaOnlyDeletedCount} SHA-only version(s)`);
-            } else {
-              core.info('No SHA-only versions to delete');
-            }
+            core.info(`Age/count-based deleted: ${ageBasedDeleted}`);
+            core.info(`Retained: ${retainedCount} (${retainedTaggedCount} tagged)`);
 
             return JSON.stringify({
-              totalBefore: sortedVersions.length,
-              ageBasedDeleted: ageBasedResult.deletedCount || 0,
-              ageBasedRetained: ageBasedResult.retainedCount || 0,
-              ageBasedRetainedTagged: ageBasedResult.retainedTaggedCount || 0,
-              shaOnlyDeleted: shaOnlyDeletedCount,
+              totalBefore: versions.length,
+              shaOnlyDeleted,
+              shaOnlyRetained,
+              ageBasedDeleted,
+              retainedCount,
+              retainedTaggedCount,
             });
 
       - name: Generate cleanup report
         if: always()
         uses: actions/github-script@v8
         env:
-          AGE_BASED_RESULT: ${{ steps.cleanup_by_age.outputs.result }}
-          SHA_ONLY_RESULT: ${{ steps.cleanup_sha_only.outputs.result }}
+          CLEANUP_RESULT: ${{ steps.cleanup.outputs.result }}
           DELETE_SHA_ONLY_TAGS: ${{ env.DELETE_SHA_ONLY_TAGS }}
           DRY_RUN: ${{ env.DRY_RUN }}
           IMAGES_TO_KEEP: ${{ env.IMAGES_TO_KEEP }}
@@ -361,6 +293,7 @@ jobs:
         with:
           script: |
             const dryRun = process.env.DRY_RUN === 'true';
+            const deleteShaOnly = process.env.DELETE_SHA_ONLY_TAGS === 'true';
             const imagesToKeep = process.env.IMAGES_TO_KEEP || '0';
             const retentionDays = process.env.RETENTION_DAYS || '0';
 
@@ -375,27 +308,22 @@ jobs:
             summary += '|---------|-------|\n';
             summary += `| Images to keep | ${imagesToKeep} |\n`;
             summary += `| Retention days | ${retentionDays} |\n`;
-            summary += `| Delete SHA-only tags | ${process.env.DELETE_SHA_ONLY_TAGS} |\n\n`;
+            summary += `| Delete SHA-only tags | ${deleteShaOnly} |\n\n`;
 
-            const shaOnlyResult = process.env.SHA_ONLY_RESULT;
-            const ageBasedResult = process.env.AGE_BASED_RESULT;
-
-            if (shaOnlyResult && shaOnlyResult !== 'null') {
-              const result = JSON.parse(shaOnlyResult);
+            const result = process.env.CLEANUP_RESULT;
+            if (result && result !== 'null') {
+              const data = JSON.parse(result);
               summary += '### Summary\n';
               summary += '| Metric | Count |\n';
               summary += '|--------|-------|\n';
-              summary += `| Total versions before | ${result.totalBefore || 0} |\n`;
-              summary += `| Age-based deletions | ${result.ageBasedDeleted || 0} |\n`;
-              summary += `| SHA-only deletions | ${result.shaOnlyDeleted || 0} |\n`;
-              summary += `| **Retained tagged images** | **${result.ageBasedRetainedTagged || 0}** |\n`;
-            } else if (ageBasedResult && ageBasedResult !== 'null') {
-              const result = JSON.parse(ageBasedResult);
-              summary += '### Summary\n';
-              summary += '| Metric | Count |\n';
-              summary += '|--------|-------|\n';
-              summary += `| Age-based deletions | ${result.deletedCount || 0} |\n`;
-              summary += `| **Retained tagged images** | **${result.retainedTaggedCount || 0}** |\n`;
+              summary += `| Total versions before | ${data.totalBefore || 0} |\n`;
+              summary += `| SHA-only deleted | ${data.shaOnlyDeleted || 0} |\n`;
+              if (data.shaOnlyRetained > 0) {
+                summary += `| SHA-only retained | ${data.shaOnlyRetained || 0} |\n`;
+              }
+              summary += `| Age/count-based deleted | ${data.ageBasedDeleted || 0} |\n`;
+              summary += `| **Retained images** | **${data.retainedCount || 0}** |\n`;
+              summary += `| **Retained tagged images** | **${data.retainedTaggedCount || 0}** |\n`;
             }
 
             core.summary.addRaw(summary).write();
