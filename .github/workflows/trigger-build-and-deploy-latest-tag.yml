@@ -1,0 +1,47 @@
+---
+name: Trigger Build and Deploy for Latest Tag
+
+on:
+  schedule:
+    - cron: '0 0,12 * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  trigger-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate GitHub App token
+        id: app_token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.WORKFLOW_APP_ID }}
+          private-key: ${{ secrets.WORKFLOW_APP_PRIVATE_KEY }}
+
+      - name: Find latest version tag
+        id: latest_tag
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          latest_tag="$({
+            gh api "repos/${REPO}/tags" --paginate --jq '.[].name' || exit 1
+          } | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^v//' | sort -V | tail -n 1)"
+
+          if [[ -z "$latest_tag" ]]; then
+            echo "No version tags found."
+            exit 1
+          fi
+
+          echo "tag=v${latest_tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Trigger build-and-deploy workflow
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.latest_tag.outputs.tag }}
+        run: |
+          gh workflow run build-and-deploy.yml --repo "$REPO" --ref "$TAG"
