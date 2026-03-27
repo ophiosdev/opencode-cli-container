@@ -13,8 +13,8 @@ on:
         description: Delete images older than this many days (0 = no age limit)
         required: false
         default: '15'
-      delete_sha_only_tags:
-        description: Delete image versions that only have SHA tags
+      delete_unversioned:
+        description: Delete unversioned images (SHA-only or untagged)
         required: false
         type: boolean
         default: true
@@ -31,7 +31,7 @@ env:
   PACKAGE_NAME: opencode-cli
   IMAGES_TO_KEEP: ${{ inputs.images_to_keep || vars.GHCR_IMAGES_TO_KEEP }}
   RETENTION_DAYS: ${{ inputs.retention_days || vars.GHCR_RETENTION_DAYS }}
-  DELETE_SHA_ONLY_TAGS: ${{ github.event_name == 'workflow_dispatch' && inputs.delete_sha_only_tags || vars.GHCR_DELETE_SHA_ONLY_TAGS || 'true' }}
+  DELETE_UNVERSIONED: ${{ github.event_name == 'workflow_dispatch' && inputs.delete_unversioned || vars.GHCR_DELETE_UNVERSIONED || 'true' }}
   DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
 
 jobs:
@@ -45,7 +45,7 @@ jobs:
           PACKAGE_NAME: ${{ env.PACKAGE_NAME }}
           IMAGES_TO_KEEP: ${{ env.IMAGES_TO_KEEP }}
           RETENTION_DAYS: ${{ env.RETENTION_DAYS }}
-          DELETE_SHA_ONLY_TAGS: ${{ env.DELETE_SHA_ONLY_TAGS }}
+          DELETE_UNVERSIONED: ${{ env.DELETE_UNVERSIONED }}
           DRY_RUN: ${{ env.DRY_RUN }}
         with:
           result-encoding: string
@@ -55,7 +55,7 @@ jobs:
             const packageName = process.env.PACKAGE_NAME;
             const imagesToKeep = Number(process.env.IMAGES_TO_KEEP || 0);
             const retentionDays = Number(process.env.RETENTION_DAYS || 0);
-            const deleteShaOnly = process.env.DELETE_SHA_ONLY_TAGS === 'true';
+            const deleteUnversioned = process.env.DELETE_UNVERSIONED === 'true';
             const dryRun = process.env.DRY_RUN === 'true';
             const cutoff = retentionDays > 0 ? new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000) : null;
 
@@ -121,13 +121,13 @@ jobs:
             };
 
             const isShaTag = (value) => /^sha-[0-9a-f]{7,}$/i.test(value);
-            const isShaOnlyVersion = (version) => {
+            const isUnversioned = (version) => {
               const tags = version.metadata?.container?.tags ?? [];
-              return tags.length > 0 && tags.every(isShaTag);
+              return tags.length === 0 || tags.every(isShaTag);
             };
-            const hasNonShaTag = (version) => {
+            const isTagged = (version) => {
               const tags = version.metadata?.container?.tags ?? [];
-              return tags.length > 0 && tags.some(tag => !isShaTag(tag));
+              return tags.length > 0 && !tags.every(isShaTag);
             };
 
             // Semantic version handling
@@ -185,18 +185,18 @@ jobs:
               return new Date(right.updated_at) - new Date(left.updated_at);
             });
 
-            // Separate SHA-only from regular versions
-            const shaOnlyVersions = sortedVersions.filter(isShaOnlyVersion);
-            const nonShaOnlyVersions = sortedVersions.filter(v => !isShaOnlyVersion(v));
+            // Separate unversioned (SHA-only or untagged) from properly tagged versions
+            const unversionedVersions = sortedVersions.filter(isUnversioned);
+            const taggedVersions = sortedVersions.filter(isTagged);
 
-            core.info(`${shaOnlyVersions.length} SHA-only versions${deleteShaOnly ? ' (will be deleted)' : ''}`);
-            core.info(`${nonShaOnlyVersions.length} non-SHA-only versions to evaluate for retention`);
+            core.info(`${unversionedVersions.length} unversioned versions (SHA-only or untagged)`);
+            core.info(`${taggedVersions.length} tagged versions to evaluate for retention`);
 
-            // Apply retention filter to non-SHA-only versions
-            let candidates = nonShaOnlyVersions;
+            // Apply retention filter to tagged versions
+            let candidates = taggedVersions;
             if (retentionDays > 0) {
-              candidates = nonShaOnlyVersions.filter(v => new Date(v.updated_at) >= cutoff);
-              core.info(`Retention filter: ${candidates.length} of ${nonShaOnlyVersions.length} versions within ${retentionDays} days`);
+              candidates = taggedVersions.filter(v => new Date(v.updated_at) >= cutoff);
+              core.info(`Retention filter: ${candidates.length} of ${taggedVersions.length} versions within ${retentionDays} days`);
             }
 
             // Apply count cap
@@ -206,56 +206,49 @@ jobs:
             }
 
             // Safety: ensure at least 1 tagged image
-            const taggedCandidates = candidates.filter(hasNonShaTag);
-            if (taggedCandidates.length === 0) {
-              const newestTagged = nonShaOnlyVersions.find(hasNonShaTag);
-              if (newestTagged) {
-                candidates.unshift(newestTagged);
-                core.info(`Safety: added newest tagged version ${newestTagged.id} to ensure minimum of 1 tagged image`);
-              }
+            if (candidates.length === 0 && taggedVersions.length > 0) {
+              candidates.push(taggedVersions[0]);
+              core.info(`Safety: added newest tagged version ${taggedVersions[0].id} to ensure minimum of 1 tagged image`);
             }
 
             // Build set of IDs to keep
             const keepIds = new Set(candidates.map(v => v.id));
-            core.info(`Will keep ${keepIds.size} non-SHA-only versions`);
+            core.info(`Will keep ${keepIds.size} tagged versions`);
 
-            // Process all versions in a single pass
-            let shaOnlyDeleted = 0;
-            let shaOnlyRetained = 0;
+            // Process all versions
+            let unversionedDeleted = 0;
             let ageBasedDeleted = 0;
             let retainedCount = 0;
-            let retainedTaggedCount = 0;
 
             core.info('');
-            if (deleteShaOnly) {
-              core.info('=== SHA-only versions (will be deleted) ===');
-              for (const version of shaOnlyVersions) {
+            core.info('=== Unversioned (SHA-only or untagged) ===');
+            if (unversionedVersions.length === 0) {
+              core.info('None found.');
+            } else if (deleteUnversioned) {
+              for (const version of unversionedVersions) {
                 const tags = version.metadata?.container?.tags ?? [];
-                core.info(`${dryRun ? '[DRY RUN] Would delete' : 'Deleting'} SHA-only version ${version.id} with tags: ${tags.join(', ')}`);
+                core.info(`${dryRun ? '[DRY RUN] Would delete' : 'Deleting'} unversioned version ${version.id} with tags: ${tags.join(', ') || '(none)'}`);
                 if (!dryRun) {
                   await deleteVersion(scope, version.id);
                 }
-                shaOnlyDeleted += 1;
+                unversionedDeleted += 1;
               }
             } else {
-              core.info('=== SHA-only versions (skipped - DELETE_SHA_ONLY_TAGS is false) ===');
-              for (const version of shaOnlyVersions) {
+              for (const version of unversionedVersions) {
                 const tags = version.metadata?.container?.tags ?? [];
-                core.info(`Keeping SHA-only version ${version.id} with tags: ${tags.join(', ')}`);
-                shaOnlyRetained += 1;
+                core.info(`Keeping unversioned version ${version.id} with tags: ${tags.join(', ') || '(none)'} (DELETE_UNVERSIONED is false)`);
               }
             }
 
             core.info('');
-            core.info('=== Non-SHA-only versions ===');
-            for (const version of nonShaOnlyVersions) {
+            core.info('=== Tagged versions ===');
+            for (const version of taggedVersions) {
               const tags = version.metadata?.container?.tags ?? [];
               if (keepIds.has(version.id)) {
-                core.info(`Keeping version ${version.id} with tags: ${tags.join(', ') || '(none)'}`);
+                core.info(`Keeping version ${version.id} with tags: ${tags.join(', ')}`);
                 retainedCount += 1;
-                if (hasNonShaTag(version)) retainedTaggedCount += 1;
               } else {
-                core.info(`${dryRun ? '[DRY RUN] Would delete' : 'Deleting'} version ${version.id} with tags: ${tags.join(', ') || '(none)'}`);
+                core.info(`${dryRun ? '[DRY RUN] Would delete' : 'Deleting'} version ${version.id} with tags: ${tags.join(', ')}`);
                 if (!dryRun) {
                   await deleteVersion(scope, version.id);
                 }
@@ -265,20 +258,17 @@ jobs:
 
             core.info('');
             core.info('=== Summary ===');
-            core.info(`SHA-only deleted: ${shaOnlyDeleted}`);
-            if (!deleteShaOnly) {
-              core.info(`SHA-only retained: ${shaOnlyRetained}`);
+            if (deleteUnversioned) {
+              core.info(`Unversioned deleted: ${unversionedDeleted}`);
             }
             core.info(`Age/count-based deleted: ${ageBasedDeleted}`);
-            core.info(`Retained: ${retainedCount} (${retainedTaggedCount} tagged)`);
+            core.info(`Retained: ${retainedCount} (all tagged)`);
 
             return JSON.stringify({
               totalBefore: versions.length,
-              shaOnlyDeleted,
-              shaOnlyRetained,
+              unversionedDeleted,
               ageBasedDeleted,
               retainedCount,
-              retainedTaggedCount,
             });
 
       - name: Generate cleanup report
@@ -286,14 +276,14 @@ jobs:
         uses: actions/github-script@v8
         env:
           CLEANUP_RESULT: ${{ steps.cleanup.outputs.result }}
-          DELETE_SHA_ONLY_TAGS: ${{ env.DELETE_SHA_ONLY_TAGS }}
+          DELETE_UNVERSIONED: ${{ env.DELETE_UNVERSIONED }}
           DRY_RUN: ${{ env.DRY_RUN }}
           IMAGES_TO_KEEP: ${{ env.IMAGES_TO_KEEP }}
           RETENTION_DAYS: ${{ env.RETENTION_DAYS }}
         with:
           script: |
             const dryRun = process.env.DRY_RUN === 'true';
-            const deleteShaOnly = process.env.DELETE_SHA_ONLY_TAGS === 'true';
+            const deleteUnversioned = process.env.DELETE_UNVERSIONED === 'true';
             const imagesToKeep = process.env.IMAGES_TO_KEEP || '0';
             const retentionDays = process.env.RETENTION_DAYS || '0';
 
@@ -308,7 +298,7 @@ jobs:
             summary += '|---------|-------|\n';
             summary += `| Images to keep | ${imagesToKeep} |\n`;
             summary += `| Retention days | ${retentionDays} |\n`;
-            summary += `| Delete SHA-only tags | ${deleteShaOnly} |\n\n`;
+            summary += `| Delete unversioned | ${deleteUnversioned} |\n\n`;
 
             const result = process.env.CLEANUP_RESULT;
             if (result && result !== 'null') {
@@ -317,13 +307,11 @@ jobs:
               summary += '| Metric | Count |\n';
               summary += '|--------|-------|\n';
               summary += `| Total versions before | ${data.totalBefore || 0} |\n`;
-              summary += `| SHA-only deleted | ${data.shaOnlyDeleted || 0} |\n`;
-              if (data.shaOnlyRetained > 0) {
-                summary += `| SHA-only retained | ${data.shaOnlyRetained || 0} |\n`;
+              if (deleteUnversioned) {
+                summary += `| Unversioned deleted | ${data.unversionedDeleted || 0} |\n`;
               }
               summary += `| Age/count-based deleted | ${data.ageBasedDeleted || 0} |\n`;
-              summary += `| **Retained images** | **${data.retainedCount || 0}** |\n`;
-              summary += `| **Retained tagged images** | **${data.retainedTaggedCount || 0}** |\n`;
+              summary += `| **Retained tagged images** | **${data.retainedCount || 0}** |\n`;
             }
 
             core.summary.addRaw(summary).write();
