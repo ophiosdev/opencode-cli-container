@@ -128,10 +128,61 @@ jobs:
               return tags.length > 0 && tags.some(tag => !isShaTag(tag));
             };
 
+            // Semantic version handling
+            const specialTags = new Set(['latest', 'stable', 'next', 'canary', 'edge', 'dev', 'alpha', 'beta', 'rc', 'release']);
+            const semverPattern = /^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:[-._]?(.+))?$/;
+
+            const parseSemver = (tag) => {
+              const match = tag.match(semverPattern);
+              if (!match) return null;
+              return {
+                major: parseInt(match[1], 10),
+                minor: match[2] !== undefined ? parseInt(match[2], 10) : 0,
+                patch: match[3] !== undefined ? parseInt(match[3], 10) : 0,
+                prerelease: match[4] || null,
+                original: tag
+              };
+            };
+
+            const compareSemver = (a, b) => {
+              if (a.major !== b.major) return a.major - b.major;
+              if (a.minor !== b.minor) return a.minor - b.minor;
+              if (a.patch !== b.patch) return a.patch - b.patch;
+              // Prerelease versions are lower than release
+              if (a.prerelease && !b.prerelease) return -1;
+              if (!a.prerelease && b.prerelease) return 1;
+              if (a.prerelease && b.prerelease) return a.prerelease.localeCompare(b.prerelease);
+              return 0;
+            };
+
+            const extractSemver = (version) => {
+              const tags = version.metadata?.container?.tags ?? [];
+              const semverTags = tags
+                .filter(tag => !isShaTag(tag) && !specialTags.has(tag.toLowerCase()))
+                .map(parseSemver)
+                .filter(Boolean)
+                .sort((a, b) => compareSemver(b, a)); // Highest version first
+              return semverTags[0] || null;
+            };
+
             const { scope, versions } = await paginateVersions();
-            const sortedVersions = [...versions].sort(
-              (left, right) => new Date(right.updated_at) - new Date(left.updated_at),
-            );
+
+            // Sort by semantic version DESC, then by updated_at DESC as tiebreaker
+            const sortedVersions = [...versions].sort((left, right) => {
+              const leftSemver = extractSemver(left);
+              const rightSemver = extractSemver(right);
+
+              if (leftSemver && rightSemver) {
+                const cmp = compareSemver(rightSemver, leftSemver);
+                if (cmp !== 0) return cmp;
+              } else if (leftSemver && !rightSemver) {
+                return -1; // Has version > no version
+              } else if (!leftSemver && rightSemver) {
+                return 1;
+              }
+              // Tiebreaker: newer update time first
+              return new Date(right.updated_at) - new Date(left.updated_at);
+            });
 
             const nonShaOnlyVersions = sortedVersions.filter(v => !isShaOnlyVersion(v));
 
@@ -265,18 +316,28 @@ jobs:
               (left, right) => new Date(right.updated_at) - new Date(left.updated_at),
             );
 
+            const shaOnlyVersions = sortedVersions.filter(v => {
+              const tags = v.metadata?.container?.tags ?? [];
+              return tags.length > 0 && tags.every(isShaTag);
+            });
+
+            core.info(`Found ${shaOnlyVersions.length} SHA-only versions to evaluate`);
+
             let shaOnlyDeletedCount = 0;
 
-            for (const version of sortedVersions) {
+            for (const version of shaOnlyVersions) {
               const tags = version.metadata?.container?.tags ?? [];
-              const isShaOnly = tags.length > 0 && tags.every(isShaTag);
-              if (!isShaOnly) continue;
-
               core.info(`${dryRun ? 'Would delete' : 'Deleting'} version ${version.id} with SHA-only tags: ${tags.join(', ')}`);
               if (!dryRun) {
                 await deleteVersion(scope, version.id);
               }
               shaOnlyDeletedCount += 1;
+            }
+
+            if (shaOnlyDeletedCount > 0) {
+              core.info(`${dryRun ? 'Would delete' : 'Deleted'} ${shaOnlyDeletedCount} SHA-only version(s)`);
+            } else {
+              core.info('No SHA-only versions to delete');
             }
 
             return JSON.stringify({
