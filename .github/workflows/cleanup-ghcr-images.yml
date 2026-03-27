@@ -183,6 +183,7 @@ jobs:
           DRY_RUN: ${{ env.DRY_RUN }}
           DELETED_VERSION_IDS: ${{ steps.cleanup_by_age.outputs.result }}
         with:
+          result-encoding: string
           script: |
             const owner = context.repo.owner;
             const packageType = 'container';
@@ -317,10 +318,10 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
 
           if [ -n "$SHA_ONLY_RESULT" ] && [ "$SHA_ONLY_RESULT" != "null" ]; then
-            AGE_DELETED=$(echo "$AGE_BASED_RESULT" | jq -r 'if type == "array" then length elif type == "object" then .ageBasedDeleted // 0 else 0 end')
-            SHA_DELETED=$(echo "$SHA_ONLY_RESULT" | jq '.shaOnlyDeleted // 0')
-            TOTAL_BEFORE=$(echo "$SHA_ONLY_RESULT" | jq '.totalBefore // 0')
-            REMAINING=$(echo "$SHA_ONLY_RESULT" | jq '.remaining // 0')
+            AGE_DELETED=$(echo "$AGE_BASED_RESULT" | sed 's/^"//;s/"$//' | jq -r 'if type == "array" then length elif type == "object" then .ageBasedDeleted // 0 else 0 end')
+            SHA_DELETED=$(echo "$SHA_ONLY_RESULT" | sed 's/^"//;s/"$//' | jq '.shaOnlyDeleted // 0')
+            TOTAL_BEFORE=$(echo "$SHA_ONLY_RESULT" | sed 's/^"//;s/"$//' | jq '.totalBefore // 0')
+            REMAINING=$(echo "$SHA_ONLY_RESULT" | sed 's/^"//;s/"$//' | jq '.remaining // 0')
 
             echo "### Summary" >> $GITHUB_STEP_SUMMARY
             echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
@@ -330,7 +331,7 @@ jobs:
             echo "| SHA-only deletions | ${SHA_DELETED} |" >> $GITHUB_STEP_SUMMARY
             echo "| **Remaining versions** | **${REMAINING}** |" >> $GITHUB_STEP_SUMMARY
           elif [ -n "$AGE_BASED_RESULT" ] && [ "$AGE_BASED_RESULT" != "null" ]; then
-            AGE_DELETED=$(echo "$AGE_BASED_RESULT" | jq -r 'if type == "array" then length else 0 end')
+            AGE_DELETED=$(echo "$AGE_BASED_RESULT" | sed 's/^"//;s/"$//' | jq -r 'if type == "array" then length else 0 end')
             echo "### Summary" >> $GITHUB_STEP_SUMMARY
             echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
             echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
