@@ -6,13 +6,13 @@ on:
   workflow_dispatch:
     inputs:
       images_to_keep:
-        description: Keep this many newest non-SHA-only image versions (0 = no count limit, minimum 1 always kept)
+        description: Maximum number of tagged images to keep (high water mark, 0 = no limit)
         required: false
-        default: '4'
+        default: ''
       retention_days:
-        description: Delete non-SHA-only image versions older than this many days (0 = no age limit)
+        description: Delete images older than this many days (0 = no age limit)
         required: false
-        default: '30'
+        default: ''
       delete_sha_only_tags:
         description: Delete image versions that only have SHA tags
         required: false
@@ -54,10 +54,8 @@ jobs:
             const packageName = process.env.PACKAGE_NAME;
             const imagesToKeep = Number(process.env.IMAGES_TO_KEEP || 0);
             const retentionDays = Number(process.env.RETENTION_DAYS || 0);
-            const minimumToKeep = Math.max(1, imagesToKeep);
             const dryRun = process.env.DRY_RUN === 'true';
             const cutoff = retentionDays > 0 ? new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000) : null;
-            let deletedCount = 0;
 
             if (!Number.isFinite(imagesToKeep) || imagesToKeep < 0) {
               throw new Error(`IMAGES_TO_KEEP must be a non-negative number, received: ${process.env.IMAGES_TO_KEEP}`);
@@ -135,43 +133,58 @@ jobs:
               (left, right) => new Date(right.updated_at) - new Date(left.updated_at),
             );
 
+            const nonShaOnlyVersions = sortedVersions.filter(v => !isShaOnlyVersion(v));
+
+            // Step 1: Filter by retention window (if RETENTION_DAYS > 0)
+            let candidates = nonShaOnlyVersions;
+            if (retentionDays > 0) {
+              candidates = nonShaOnlyVersions.filter(v => new Date(v.updated_at) >= cutoff);
+              core.info(`Retention filter: ${candidates.length} of ${nonShaOnlyVersions.length} versions within ${retentionDays} days`);
+            }
+
+            // Step 2: Cap by IMAGES_TO_KEEP (high water mark, if > 0)
+            if (imagesToKeep > 0 && candidates.length > imagesToKeep) {
+              candidates = candidates.slice(0, imagesToKeep);
+              core.info(`Count cap: limiting to ${imagesToKeep} newest versions`);
+            }
+
+            // Step 3: Safety - ensure at least 1 tagged image
+            const taggedCandidates = candidates.filter(hasNonShaTag);
+            if (taggedCandidates.length === 0) {
+              const newestTagged = nonShaOnlyVersions.find(hasNonShaTag);
+              if (newestTagged) {
+                candidates.unshift(newestTagged);
+                core.info(`Safety: added newest tagged version ${newestTagged.id} to ensure minimum of 1 tagged image`);
+              }
+            }
+
+            // Build set of IDs to keep
+            const keepIds = new Set(candidates.map(v => v.id));
+
+            let deletedCount = 0;
             let retainedCount = 0;
             let retainedTaggedCount = 0;
 
             for (const version of sortedVersions) {
-              const updatedAt = new Date(version.updated_at);
               const tags = version.metadata?.container?.tags ?? [];
               const isShaOnly = isShaOnlyVersion(version);
-              const isTagged = hasNonShaTag(version);
-              const withinRetention = retentionDays > 0 && updatedAt >= cutoff;
-              const needForMinimum = retainedTaggedCount < minimumToKeep;
 
               if (isShaOnly) {
-                core.info(`Skipping age-based keep-count evaluation for SHA-only version ${version.id} with tags: ${tags.join(', ')}`);
+                core.info(`Skipping SHA-only version ${version.id} with tags: ${tags.join(', ')}`);
                 continue;
               }
 
-              if (withinRetention) {
-                core.info(`Keeping version ${version.id}; updated ${version.updated_at} is within ${retentionDays} days.`);
+              if (keepIds.has(version.id)) {
+                core.info(`Keeping version ${version.id} with tags: ${tags.join(', ') || '(none)'}`);
                 retainedCount += 1;
-                if (isTagged) retainedTaggedCount += 1;
-                continue;
+                if (hasNonShaTag(version)) retainedTaggedCount += 1;
+              } else {
+                core.info(`${dryRun ? 'Would delete' : 'Deleting'} version ${version.id} updated ${version.updated_at} with tags: ${tags.join(', ') || '(none)'}`);
+                if (!dryRun) {
+                  await deleteVersion(scope, version.id);
+                }
+                deletedCount += 1;
               }
-
-              if (isTagged && needForMinimum) {
-                core.info(`Keeping version ${version.id} to maintain minimum of ${minimumToKeep} tagged image(s).`);
-                retainedCount += 1;
-                retainedTaggedCount += 1;
-                continue;
-              }
-
-              core.info(
-                `${dryRun ? 'Would delete' : 'Deleting'} version ${version.id} updated ${version.updated_at} with tags: ${tags.join(', ') || '(none)'}`,
-              );
-              if (!dryRun) {
-                await deleteVersion(scope, version.id);
-              }
-              deletedCount += 1;
             }
 
             return JSON.stringify({ deletedCount, retainedCount, retainedTaggedCount });
