@@ -12,7 +12,7 @@ on:
       retention_days:
         description: Delete non-SHA-only image versions older than this many days
         required: false
-        default: ''
+        default: '45'
       delete_sha_only_tags:
         description: Delete image versions that only have SHA tags
         required: false
@@ -175,11 +175,11 @@ jobs:
             return JSON.stringify(deletedVersionIds);
 
       - name: Delete container versions that only have SHA tags
+        id: cleanup_sha_only
         if: ${{ env.DELETE_SHA_ONLY_TAGS == 'true' }}
         uses: actions/github-script@v8
         env:
           PACKAGE_NAME: ${{ env.PACKAGE_NAME }}
-          IMAGES_TO_KEEP: ${{ env.IMAGES_TO_KEEP }}
           DRY_RUN: ${{ env.DRY_RUN }}
           DELETED_VERSION_IDS: ${{ steps.cleanup_by_age.outputs.result }}
         with:
@@ -187,12 +187,7 @@ jobs:
             const owner = context.repo.owner;
             const packageType = 'container';
             const packageName = process.env.PACKAGE_NAME;
-            const imagesToKeep = Math.max(1, Number(process.env.IMAGES_TO_KEEP || '4'));
             const dryRun = process.env.DRY_RUN === 'true';
-
-            if (!Number.isFinite(imagesToKeep)) {
-              throw new Error(`IMAGES_TO_KEEP must be a number, received: ${process.env.IMAGES_TO_KEEP}`);
-            }
 
             const paginateVersions = async () => {
               try {
@@ -267,7 +262,7 @@ jobs:
               return;
             }
 
-            for (const [index, version] of remainingVersions.entries()) {
+            for (const version of remainingVersions) {
               const tags = version.metadata?.container?.tags ?? [];
               const isShaOnly = tags.length > 0 && tags.every(isShaTag);
               if (!isShaOnly) {
@@ -279,5 +274,65 @@ jobs:
               if (!dryRun) {
                 await deleteVersion(scope, version.id);
               }
-              retainedCount -= 1;
             }
+
+            const shaOnlyDeleted = remainingVersions.filter(v => {
+              const tags = v.metadata?.container?.tags ?? [];
+              return tags.length > 0 && tags.every(isShaTag);
+            });
+
+            return JSON.stringify({
+              totalBefore: sortedVersions.length,
+              ageBasedDeleted: JSON.parse(process.env.DELETED_VERSION_IDS || '[]').length,
+              shaOnlyDeleted: shaOnlyDeleted.length,
+              remaining: sortedVersions.length - (dryRun ? JSON.parse(process.env.DELETED_VERSION_IDS || '[]').length + shaOnlyDeleted.length : 0),
+            });
+
+      - name: Generate cleanup report
+        if: always()
+        env:
+          AGE_BASED_RESULT: ${{ steps.cleanup_by_age.outputs.result }}
+          SHA_ONLY_RESULT: ${{ steps.cleanup_sha_only.outputs.result }}
+          DELETE_SHA_ONLY_TAGS: ${{ env.DELETE_SHA_ONLY_TAGS }}
+          DRY_RUN: ${{ env.DRY_RUN }}
+          IMAGES_TO_KEEP: ${{ env.IMAGES_TO_KEEP }}
+          RETENTION_DAYS: ${{ env.RETENTION_DAYS }}
+        run: |
+          echo "## 🧹 GHCR Cleanup Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "> ⚠️ **Dry run mode** - no images were actually deleted" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "### Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "| Setting | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Images to keep | ${IMAGES_TO_KEEP} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Retention days | ${RETENTION_DAYS} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Delete SHA-only tags | ${DELETE_SHA_ONLY_TAGS} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ -n "$SHA_ONLY_RESULT" ] && [ "$SHA_ONLY_RESULT" != "null" ]; then
+            AGE_DELETED=$(echo "$AGE_BASED_RESULT" | jq -r 'if type == "array" then length elif type == "object" then .ageBasedDeleted // 0 else 0 end')
+            SHA_DELETED=$(echo "$SHA_ONLY_RESULT" | jq -r '.shaOnlyDeleted // 0')
+            TOTAL_BEFORE=$(echo "$SHA_ONLY_RESULT" | jq -r '.totalBefore // 0')
+            REMAINING=$(echo "$SHA_ONLY_RESULT" | jq -r '.remaining // 0')
+
+            echo "### Summary" >> $GITHUB_STEP_SUMMARY
+            echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Total versions before | ${TOTAL_BEFORE} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Age-based deletions | ${AGE_DELETED} |" >> $GITHUB_STEP_SUMMARY
+            echo "| SHA-only deletions | ${SHA_DELETED} |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Remaining versions** | **${REMAINING}** |" >> $GITHUB_STEP_SUMMARY
+          elif [ -n "$AGE_BASED_RESULT" ] && [ "$AGE_BASED_RESULT" != "null" ]; then
+            AGE_DELETED=$(echo "$AGE_BASED_RESULT" | jq -r 'if type == "array" then length else 0 end')
+            echo "### Summary" >> $GITHUB_STEP_SUMMARY
+            echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Age-based deletions | ${AGE_DELETED} |" >> $GITHUB_STEP_SUMMARY
+          fi
