@@ -235,10 +235,11 @@ cat >"${OPENCODE_CONFIG_DIR}/opencode.json" <<-'EOF'
     "jcodemunch": {
       "type": "local",
       "command": [
-        "jcodemunch-mcp", "--log-level", "DEBUG", "--log-file", "/home/bun/.local/share/opencode/log/jcodemunch.log"
+        "jcodemunch-mcp", "--log-level", "WARNING", "--log-file", "/home/bun/.local/share/opencode/log/jcodemunch.log"
       ],
       "environment": {
-        "JCODEMUNCH_SHARE_SAVINGS": "0"
+        "JCODEMUNCH_SHARE_SAVINGS": "0",
+        "JCODEMUNCH_TRUSTED_FOLDERS": "/work"
       },
       "enabled": false
     }
