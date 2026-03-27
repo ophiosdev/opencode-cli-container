@@ -8,11 +8,11 @@ on:
       images_to_keep:
         description: Keep this many newest non-SHA-only image versions (0 = no count limit, minimum 1 always kept)
         required: false
-        default: ''
+        default: '4'
       retention_days:
         description: Delete non-SHA-only image versions older than this many days (0 = no age limit)
         required: false
-        default: ''
+        default: '30'
       delete_sha_only_tags:
         description: Delete image versions that only have SHA tags
         required: false
