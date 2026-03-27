@@ -318,9 +318,9 @@ jobs:
 
           if [ -n "$SHA_ONLY_RESULT" ] && [ "$SHA_ONLY_RESULT" != "null" ]; then
             AGE_DELETED=$(echo "$AGE_BASED_RESULT" | jq -r 'if type == "array" then length elif type == "object" then .ageBasedDeleted // 0 else 0 end')
-            SHA_DELETED=$(echo "$SHA_ONLY_RESULT" | jq -r '.shaOnlyDeleted // 0')
-            TOTAL_BEFORE=$(echo "$SHA_ONLY_RESULT" | jq -r '.totalBefore // 0')
-            REMAINING=$(echo "$SHA_ONLY_RESULT" | jq -r '.remaining // 0')
+            SHA_DELETED=$(echo "$SHA_ONLY_RESULT" | jq -Rr 'fromjson? // {} | .shaOnlyDeleted // 0')
+            TOTAL_BEFORE=$(echo "$SHA_ONLY_RESULT" | jq -Rr 'fromjson? // {} | .totalBefore // 0')
+            REMAINING=$(echo "$SHA_ONLY_RESULT" | jq -Rr 'fromjson? // {} | .remaining // 0')
 
             echo "### Summary" >> $GITHUB_STEP_SUMMARY
             echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
