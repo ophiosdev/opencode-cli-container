@@ -8,11 +8,11 @@ on:
       images_to_keep:
         description: Maximum number of tagged images to keep (high water mark, 0 = no limit)
         required: false
-        default: ''
+        default: '4'
       retention_days:
         description: Delete images older than this many days (0 = no age limit)
         required: false
-        default: ''
+        default: '15'
       delete_sha_only_tags:
         description: Delete image versions that only have SHA tags
         required: false
