@@ -1,9 +1,10 @@
 IMAGE ?= opencode-cli
-TAG ?= dev
+TAG ?= local
 IMAGE_REF := $(IMAGE):$(TAG)
 DOCKERFILE ?= Dockerfile
 CONTEXT ?= .
 OPENCODE_VERSION ?= latest
+AZURE_FOUNDRY_PROVIDER_REF ?= v0.3.0
 
 .PHONY: build clean
 
@@ -13,6 +14,7 @@ build:
 		-t $(IMAGE_REF) \
 		-f $(DOCKERFILE) \
 		--build-arg OPENCODE_VERSION=$(OPENCODE_VERSION) \
+		--build-arg AZURE_FOUNDRY_PROVIDER_REF=$(AZURE_FOUNDRY_PROVIDER_REF) \
 		$(CONTEXT)
 
 clean:
