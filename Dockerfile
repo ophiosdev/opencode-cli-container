@@ -25,7 +25,7 @@ apt-get install \
     libatomic1 \
     -y
 
-apt-get install make gpg -y --no-install-recommends
+apt-get install make gpg gpg-agent procps -y --no-install-recommends
 
 rm -rf /var/lib/apt/lists/* /var/cache/apt
 
@@ -86,6 +86,7 @@ ARG OPENCODE_BUILD_DIR=/usr/local/share/opencode-build
 ENV OPENCODE_CONFIG_DIR=/etc/opencode
 ENV OPENCODE_EXPERIMENTAL=1
 ENV ENGRAM_DATA_DIR=/home/bun/.local/share/opencode/engram
+ENV RTK_TELEMETRY_DISABLED=1
 
 ENV AGENT_BROWSER_ENGINE=lightpanda
 
@@ -157,7 +158,7 @@ engram_url="https://github.com/Gentleman-Programming/engram/releases/download/${
 (
   curl -fsSL "${engram_url}" | tar -C /usr/local/bin -xvzf - engram \
   && curl -fsSL "https://raw.githubusercontent.com/Gentleman-Programming/engram/refs/tags/${engram_resolved_version}/plugin/opencode/engram.ts" -o "${OPENCODE_PLUGINS_DIR}/engram.ts"
-)
+) || exit 1
 
 ###
 # UV
@@ -169,6 +170,16 @@ curl -fsSL "${uv_url}" | tar -C /usr/local/bin -xvzf - --strip-components=1 --wi
 ##
 # jcodemunch-mcp
 uv pip install --system jcodemunch-mcp || exit 1
+
+##
+# rtk
+(
+  curl -fsSL "https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh" \
+  | RTK_INSTALL_DIR=/usr/local/bin sh
+) || exit 1
+
+curl -fsSL "https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/hooks/opencode/rtk.ts" -o "${OPENCODE_PLUGINS_DIR}/rtk.ts" \
+|| exit 1
 
 ###
 # cleanup
@@ -194,8 +205,7 @@ cat >"${OPENCODE_CONFIG_DIR}/opencode.json" <<-'EOF'
 {
   "$schema": "https://opencode.ai/config.json",
   "plugin": [
-    "engram",
-    "file:///usr/local/bun/install/global/node_modules/opencode-gemini-auth"
+    "file:///usr/local/bun/install/global/node_modules/opencode-gemini-auth",
   ],
   "mcp": {
     "engram": {
