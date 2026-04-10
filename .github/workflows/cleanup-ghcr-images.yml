@@ -40,7 +40,7 @@ jobs:
     steps:
       - name: Cleanup container versions
         id: cleanup
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         env:
           PACKAGE_NAME: ${{ env.PACKAGE_NAME }}
           IMAGES_TO_KEEP: ${{ env.IMAGES_TO_KEEP }}
@@ -273,7 +273,7 @@ jobs:
 
       - name: Generate cleanup report
         if: always()
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         env:
           CLEANUP_RESULT: ${{ steps.cleanup.outputs.result }}
           DELETE_UNVERSIONED: ${{ env.DELETE_UNVERSIONED }}
