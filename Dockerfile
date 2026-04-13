@@ -79,7 +79,7 @@ EOF
 FOE
 
 ARG OPENCODE_VERSION=latest
-ARG AZURE_FOUNDRY_PROVIDER_REF=v0.3.0
+ARG AZURE_FOUNDRY_PROVIDER_REF=v0.3.1
 ARG ENGRAM_VERSION=latest
 ARG OPENCODE_BUILD_DIR=/usr/local/share/opencode-build
 
@@ -180,6 +180,10 @@ uv pip install --system jcodemunch-mcp || exit 1
 
 curl -fsSL "https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/hooks/opencode/rtk.ts" -o "${OPENCODE_PLUGINS_DIR}/rtk.ts" \
 || exit 1
+
+##
+# vercel/skills
+bun install -g --trust skills@latest
 
 ###
 # cleanup
