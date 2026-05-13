@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { mkdir, mkdtemp, readdir, cp, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, readdir, cp, rm, rename } from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
 import YAML from "yaml"
@@ -7,19 +7,19 @@ import YAML from "yaml"
 type Step =
   | { type: "download"; url: string; dest: string }
   | { type: "git-export"; url: string }
-  | { type: "git-export"; repo: string; path: string; ref_env?: string }
+  | { type: "git-export"; repo: string; path: string; version?: string }
   | { type: "uv-pip"; packages: string[] }
 
 type GitExportSpec = Extract<Step, { type: "git-export" }>
 type ResolvedGitExport = {
   repo: string
-  ref: string
+  ref: string | null
   path: string
 }
 type Workspace = {
   dir: string
   cloneDir: string
-  ref: string
+  ref: string | null
 }
 
 type Skill = {
@@ -42,6 +42,10 @@ function fail(msg: string): never {
   throw new Error(`[install-skills] ${msg}`)
 }
 
+function info(msg: string) {
+  console.log(`[install-skills] ${msg}`)
+}
+
 function safe(base: string, dest: string) {
   const file = path.resolve(base, dest)
   const rel = path.relative(base, file)
@@ -50,6 +54,11 @@ function safe(base: string, dest: string) {
 }
 
 async function ensure(dir: string) {
+  await mkdir(dir, { recursive: true })
+}
+
+async function resetDir(dir: string) {
+  await rm(dir, { recursive: true, force: true })
   await mkdir(dir, { recursive: true })
 }
 
@@ -67,22 +76,38 @@ function isGitHubRepo(repo: string) {
   return /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)
 }
 
-function resolveRef(step: GitExportSpec): ResolvedGitExport {
+async function resolveLatestReleaseTag(repo: string) {
+  const res = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
+    headers: {
+      Accept: "application/vnd.github+json",
+      "User-Agent": "install-skills",
+    },
+  })
+
+  if (res.status === 404) return null
+  if (!res.ok) fail(`git-export: failed latest release lookup for ${repo} (${res.status})`)
+
+  const data = (await res.json()) as { tag_name?: unknown }
+  const tag = typeof data.tag_name === "string" && data.tag_name ? data.tag_name : null
+  if (tag) info(`git-export: resolved latest release for ${repo} -> ${tag}`)
+  return tag
+}
+
+async function resolveRef(step: GitExportSpec): Promise<ResolvedGitExport> {
   if (!step.repo) fail(`git-export: missing repo`)
   if (!step.path) fail(`git-export: missing path for ${step.repo}`)
-  if (!step.ref_env) fail(`git-export: missing ref_env for ${step.repo}/${step.path}`)
-
-  const ref = process.env[step.ref_env]
-  if (!ref) fail(`git-export: missing environment variable ${step.ref_env}`)
   if (!isGitHubRepo(step.repo)) fail(`git-export: unsupported repo format: ${step.repo}`)
+
+  const version = step.version ?? "latest"
+  const ref = version === "latest" ? await resolveLatestReleaseTag(step.repo) : version
   return { repo: step.repo, path: step.path, ref }
 }
 
-function workspaceKey(repo: string, ref: string) {
-  return `${repo}@${ref}`
+function workspaceKey(repo: string, ref: string | null) {
+  return `${repo}@${ref ?? "HEAD"}`
 }
 
-async function ensureWorkspace(repo: string, ref: string) {
+async function ensureWorkspace(repo: string, ref: string | null) {
   const key = workspaceKey(repo, ref)
   const existing = workspaces.get(key)
   if (existing) return existing
@@ -91,8 +116,12 @@ async function ensureWorkspace(repo: string, ref: string) {
   const cloneDir = path.join(dir, "repo")
   const repoUrl = `https://github.com/${repo}.git`
   await shell(["git", "clone", "--depth", "1", "--filter=tree:0", "--no-checkout", repoUrl, cloneDir])
-  await shell(["git", "-C", cloneDir, "fetch", "--depth", "1", "origin", ref])
-  await shell(["git", "-C", cloneDir, "checkout", "--detach", "FETCH_HEAD"])
+  if (ref) {
+    await shell(["git", "-C", cloneDir, "fetch", "--depth", "1", "origin", ref])
+    await shell(["git", "-C", cloneDir, "checkout", "--detach", "FETCH_HEAD"])
+  } else {
+    await shell(["git", "-C", cloneDir, "checkout"])
+  }
 
   const workspace: Workspace = { dir, cloneDir, ref }
   workspaces.set(key, workspace)
@@ -116,6 +145,25 @@ async function cleanupWorkspaces() {
   workspaces.clear()
 }
 
+async function runSkill(name: string, steps: Step[]) {
+  const destDir = path.join(root, name)
+  const stageParent = await mkdtemp(path.join(os.tmpdir(), "skills-install-"))
+  const stageDir = path.join(stageParent, name)
+
+  try {
+    await resetDir(stageDir)
+    for (const step of steps) {
+      await run(name, step, stageDir)
+    }
+
+    await rm(destDir, { recursive: true, force: true })
+    await ensure(path.dirname(destDir))
+    await rename(stageDir, destDir)
+  } finally {
+    await rm(stageParent, { recursive: true, force: true })
+  }
+}
+
 async function run(name: string, step: Step, dir: string) {
   if (step.type === "download") {
     await ensure(dir)
@@ -132,7 +180,7 @@ async function run(name: string, step: Step, dir: string) {
       return
     }
 
-    const resolved = resolveRef(step)
+    const resolved = await resolveRef(step)
     const workspace = await ensureWorkspace(resolved.repo, resolved.ref)
     await copySubtreeFromWorkspace(workspace, resolved.path, dir)
     return
@@ -162,10 +210,7 @@ async function main() {
     for (const skill of manifest.skills) {
       if (!skill.name) fail(`skill missing name`)
       if (!Array.isArray(skill.steps)) fail(`${skill.name}: missing steps`)
-      const dir = path.join(root, skill.name)
-      for (const step of skill.steps) {
-        await run(skill.name, step, dir)
-      }
+      await runSkill(skill.name, skill.steps)
     }
   } finally {
     await cleanupWorkspaces()
