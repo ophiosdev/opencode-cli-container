@@ -14,7 +14,7 @@ ENV PATH="${PATH}:${PYTHON_DIR}/bin"
 RUN <<'FOE'
 
 ln -s /usr/local/bin/bun /usr/local/bin/node
-ls -s /usr/local/bin/bun /usr/local/bin/npx
+ln -s /usr/local/bin/bun /usr/local/bin/npx
 
 apt-get update
 apt-get install \
@@ -79,7 +79,8 @@ EOF
 FOE
 
 ARG OPENCODE_VERSION=latest
-ARG AZURE_FOUNDRY_PROVIDER_REF=v0.3.1
+ARG CAVEMAN_VERSION=latest
+ARG AZURE_FOUNDRY_PROVIDER_REF=v0.4.0
 ARG ENGRAM_VERSION=latest
 ARG OPENCODE_BUILD_DIR=/usr/local/share/opencode-build
 
@@ -114,6 +115,10 @@ resolve_github_latest_version() {
         fi
     fi
     echo "${version}"
+}
+
+resolve_caveman_version() {
+    resolve_github_latest_version "JuliusBrussee/caveman" "${CAVEMAN_VERSION}"
 }
 
 mkdir -p "${BUN_INSTALL}" "${OPENCODE_CONFIG_DIR}" "${OPENCODE_PLUGINS_DIR}" "${PROVIDER_DIR}"
@@ -186,6 +191,41 @@ curl -fsSL "https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/hooks
 bun install -g --trust skills@latest
 
 ###
+# caveman
+#
+caveman_resolved_version=$(resolve_caveman_version) || exit 1
+echo "CAVEMAN_RESOLVED_REF=${caveman_resolved_version}"
+echo "${caveman_resolved_version}" > /tmp/caveman_version
+
+mkdir -p "${OPENCODE_CONFIG_DIR}/plugins/caveman" "${OPENCODE_CONFIG_DIR}/commands"
+
+CAVEMAN_RAW_BASE="https://raw.githubusercontent.com/JuliusBrussee/caveman/refs/tags/${caveman_resolved_version}"
+
+{
+  curl -fsSL "${CAVEMAN_RAW_BASE}/src/plugins/opencode/package.json" -o "${OPENCODE_CONFIG_DIR}/plugins/caveman/package.json"
+  curl -fsSL "${CAVEMAN_RAW_BASE}/src/plugins/opencode/plugin.js" -o "${OPENCODE_CONFIG_DIR}/plugins/caveman/plugin.js"
+  curl -fsSL "${CAVEMAN_RAW_BASE}/src/hooks/caveman-config.js" -o "${OPENCODE_CONFIG_DIR}/plugins/caveman/caveman-config.cjs"
+  curl -fsSL "${CAVEMAN_RAW_BASE}/src/plugins/opencode/commands/caveman.md" -o "${OPENCODE_CONFIG_DIR}/commands/caveman.md"
+  curl -fsSL "${CAVEMAN_RAW_BASE}/src/plugins/opencode/commands/caveman-commit.md" -o "${OPENCODE_CONFIG_DIR}/commands/caveman-commit.md"
+  curl -fsSL "${CAVEMAN_RAW_BASE}/src/plugins/opencode/commands/caveman-review.md" -o "${OPENCODE_CONFIG_DIR}/commands/caveman-review.md"
+  curl -fsSL "${CAVEMAN_RAW_BASE}/src/plugins/opencode/commands/caveman-stats.md" -o "${OPENCODE_CONFIG_DIR}/commands/caveman-stats.md"
+  curl -fsSL "${CAVEMAN_RAW_BASE}/src/plugins/opencode/commands/caveman-help.md" -o "${OPENCODE_CONFIG_DIR}/commands/caveman-help.md"
+} & wait || exit 1
+
+cat > "${OPENCODE_CONFIG_DIR}/commands/caveman-compress.md" <<'EOF'
+---
+description: Compress a Markdown memory file using the caveman-compress skill
+---
+Compress the target file with `caveman-compress`.
+
+Input: `$ARGUMENTS`
+
+Run the installed `caveman-compress` skill workflow against the given file path.
+Preserve code, URLs, paths, commands, and structure exactly as the skill requires.
+Overwrite the original file only if the compression succeeds, and keep the `.original.md` backup.
+EOF
+
+###
 # cleanup
 rm -rf /root/.bun
 chown -Rh bun:bun "$(echo ~bun)"
@@ -199,6 +239,10 @@ COPY skills.yaml "${OPENCODE_BUILD_DIR}/skills.yaml"
 RUN <<'FOE'
 source /etc/bash.bashrc
 
+CAVEMAN_RESOLVED_REF=$(cat /tmp/caveman_version)
+
+export CAVEMAN_RESOLVED_REF
+
 BUN_INSTALL=/tmp/bun bun install --cwd "${OPENCODE_BUILD_DIR}/scripts" yaml || exit 1
 bun "${OPENCODE_BUILD_DIR}/scripts/install-skills.ts" || exit 1
 
@@ -210,6 +254,7 @@ cat >"${OPENCODE_CONFIG_DIR}/opencode.json" <<-'EOF'
   "$schema": "https://opencode.ai/config.json",
   "plugin": [
     "file:///usr/local/bun/install/global/node_modules/opencode-gemini-auth",
+    "file:///etc/opencode/plugins/caveman"
   ],
   "mcp": {
     "engram": {
