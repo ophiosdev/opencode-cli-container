@@ -22,3 +22,45 @@ skills:
     steps:
       - type: git-export
         url: https://github.com/vercel-labs/agent-browser/tree/main/skills/agent-browser
+
+  - name: caveman
+    steps:
+      - type: git-export
+        repo: JuliusBrussee/caveman
+        path: skills/caveman
+
+  - name: caveman-commit
+    steps:
+      - type: git-export
+        repo: JuliusBrussee/caveman
+        path: skills/caveman-commit
+
+  - name: caveman-review
+    steps:
+      - type: git-export
+        repo: JuliusBrussee/caveman
+        path: skills/caveman-review
+
+  - name: caveman-help
+    steps:
+      - type: git-export
+        repo: JuliusBrussee/caveman
+        path: skills/caveman-help
+
+  - name: caveman-stats
+    steps:
+      - type: git-export
+        repo: JuliusBrussee/caveman
+        path: skills/caveman-stats
+
+  - name: caveman-compress
+    steps:
+      - type: git-export
+        repo: JuliusBrussee/caveman
+        path: skills/caveman-compress
+
+  - name: cavecrew
+    steps:
+      - type: git-export
+        repo: JuliusBrussee/caveman
+        path: skills/cavecrew
