@@ -239,10 +239,6 @@ COPY skills.yaml "${OPENCODE_BUILD_DIR}/skills.yaml"
 RUN <<'FOE'
 source /etc/bash.bashrc
 
-CAVEMAN_RESOLVED_REF=$(cat /tmp/caveman_version)
-
-export CAVEMAN_RESOLVED_REF
-
 BUN_INSTALL=/tmp/bun bun install --cwd "${OPENCODE_BUILD_DIR}/scripts" yaml || exit 1
 bun "${OPENCODE_BUILD_DIR}/scripts/install-skills.ts" || exit 1
 
