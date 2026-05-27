@@ -117,10 +117,6 @@ resolve_github_latest_version() {
     echo "${version}"
 }
 
-resolve_caveman_version() {
-    resolve_github_latest_version "JuliusBrussee/caveman" "${CAVEMAN_VERSION}"
-}
-
 mkdir -p "${BUN_INSTALL}" "${OPENCODE_CONFIG_DIR}" "${OPENCODE_PLUGINS_DIR}" "${PROVIDER_DIR}"
 chmod 0777 "${OPENCODE_CONFIG_DIR}"
 
@@ -174,7 +170,8 @@ curl -fsSL "${uv_url}" | tar -C /usr/local/bin -xvzf - --strip-components=1 --wi
 
 ##
 # jcodemunch-mcp
-uv pip install --system jcodemunch-mcp || exit 1
+jcodemunch_mcp_resolved_version=$(resolve_github_latest_version "jgravelle/jcodemunch-mcp" "${JCODEMUNCH_MCP_VERSION:-latest}") || exit 1
+uv pip install --system "git+https://github.com/jgravelle/jcodemunch-mcp.git@${jcodemunch_mcp_resolved_version}" || exit 1
 
 ##
 # rtk
@@ -193,7 +190,7 @@ bun install -g --trust skills@latest
 ###
 # caveman
 #
-caveman_resolved_version=$(resolve_caveman_version) || exit 1
+caveman_resolved_version=$(resolve_github_latest_version "JuliusBrussee/caveman" "${CAVEMAN_VERSION}") || exit 1
 echo "CAVEMAN_RESOLVED_REF=${caveman_resolved_version}"
 echo "${caveman_resolved_version}" > /tmp/caveman_version
 
