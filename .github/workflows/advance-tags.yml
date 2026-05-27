@@ -1,0 +1,233 @@
+# Advances selected release tags to merged PR commit so existing tag-push build
+name: Advance Major Release Tags After Merge
+
+on:
+  pull_request:
+    types:
+      - closed
+
+  workflow_dispatch:
+    inputs:
+      tag_update_mode:
+        description: Which release tags to advance
+        required: false
+        type: choice
+        default: latest-per-major
+        options:
+          - latest-per-major
+          - all-release-tags
+
+permissions:
+  pull-requests: read
+  contents: write
+
+jobs:
+  advance-tags:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Detect changed files
+        id: changed-files
+        if: github.event_name == 'pull_request'
+        uses: tj-actions/changed-files@v47
+        with:
+          files: |
+            Dockerfile
+            skills.yaml
+            scripts/**
+
+      - name: Generate GitHub App token
+        id: app_token
+        if: github.event_name == 'workflow_dispatch' || steps.changed-files.outputs.any_changed == 'true'
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.WORKFLOW_APP_ID }}
+          private-key: ${{ secrets.WORKFLOW_APP_PRIVATE_KEY }}
+
+      - name: Write skip report when path filter does not match
+        if: github.event_name == 'pull_request' && steps.changed-files.outputs.any_changed != 'true'
+        uses: actions/github-script@v9
+        with:
+          script: |
+            await core.summary
+              .addHeading('Release Tag Advancement Report')
+              .addTable([
+                [{ data: 'Field', header: true }, { data: 'Value', header: true }],
+                ['Event', context.eventName],
+                ['Mode', 'path-filtered'],
+                ['Matched files', '0'],
+                ['Action', 'Skipped'],
+              ])
+              .addRaw('\nClosed PR did not change any configured release-trigger files. No tags were advanced.\n')
+              .write();
+
+      - name: Advance release tags
+        if: github.event_name == 'workflow_dispatch' || steps.changed-files.outputs.any_changed == 'true'
+        uses: actions/github-script@v9
+        env:
+          TARGET_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.merge_commit_sha || github.sha }}
+          TAG_UPDATE_MODE: ${{ inputs.tag_update_mode || vars.TAG_UPDATE_MODE || 'latest-per-major' }}
+        with:
+          github-token: ${{ steps.app_token.outputs.token }}
+          script: |
+            const targetSha = process.env.TARGET_SHA;
+            const tagUpdateMode = process.env.TAG_UPDATE_MODE;
+            const semverTagPattern = /^v(\d+)\.(\d+)\.(\d+)$/;
+            const shortSha = targetSha.slice(0, 7);
+
+            const compareVersions = (left, right) => {
+              if (left.major !== right.major) return left.major - right.major;
+              if (left.minor !== right.minor) return left.minor - right.minor;
+              return left.patch - right.patch;
+            };
+
+            const tags = await github.paginate(github.rest.repos.listTags, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 100,
+            });
+
+            const releaseTags = tags
+              .map((tag) => {
+                const match = tag.name.match(semverTagPattern);
+                if (!match) return null;
+                return {
+                  name: tag.name,
+                  sha: tag.commit.sha,
+                  major: Number(match[1]),
+                  minor: Number(match[2]),
+                  patch: Number(match[3]),
+                };
+              })
+              .filter(Boolean)
+              .sort((left, right) => compareVersions(left, right));
+
+            if (releaseTags.length === 0) {
+              core.info('No semantic release tags found. Nothing to update.');
+              await core.summary
+                .addHeading('Release Tag Advancement Report')
+                .addTable([
+                  [{ data: 'Field', header: true }, { data: 'Value', header: true }],
+                  ['Event', context.eventName],
+                  ['Mode', tagUpdateMode],
+                  ['Target commit', `\`${targetSha}\``],
+                  ['Semantic release tags found', '0'],
+                  ['Updated tags', '0'],
+                ])
+                .addRaw('\nNo semantic release tags found. Nothing changed.\n')
+                .write();
+              return;
+            }
+
+            let tagsToUpdate;
+            if (tagUpdateMode === 'all-release-tags') {
+              tagsToUpdate = releaseTags;
+            } else if (tagUpdateMode === 'latest-per-major') {
+              const latestByMajor = new Map();
+              for (const tag of releaseTags) {
+                latestByMajor.set(tag.major, tag);
+              }
+              tagsToUpdate = [...latestByMajor.keys()]
+                .sort((a, b) => a - b)
+                .map((major) => latestByMajor.get(major));
+            } else {
+              core.setFailed(`Unsupported TAG_UPDATE_MODE: ${tagUpdateMode}`);
+              return;
+            }
+
+            core.info(`Tag update mode: ${tagUpdateMode}`);
+
+            const updatedTags = [];
+            const skippedTags = [];
+            const failedTags = [];
+
+            let updated = 0;
+            for (const tag of tagsToUpdate) {
+
+              if (tag.sha === targetSha) {
+                core.info(`${tag.name} already points at ${targetSha}`);
+                skippedTags.push(tag);
+                continue;
+              }
+
+              core.info(`Moving ${tag.name} from ${tag.sha} to ${targetSha}`);
+              try {
+                await github.rest.git.updateRef({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: `tags/${tag.name}`,
+                  sha: targetSha,
+                  force: true,
+                });
+                updated += 1;
+                updatedTags.push(tag);
+              } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                core.error(`Failed to move ${tag.name}: ${message}`);
+                failedTags.push({
+                  ...tag,
+                  error: message,
+                });
+              }
+            }
+
+            if (updated === 0) {
+              core.info('No tags changed.');
+            }
+
+            const renderTagRows = (items, emptyText) => {
+              if (items.length === 0) {
+                return `${emptyText}\n`;
+              }
+
+              const rows = items.map((tag) => {
+                const fromSha = tag.sha ? `\`${tag.sha.slice(0, 7)}\`` : '-';
+                return `| \`${tag.name}\` | ${fromSha} | \`${shortSha}\` |`;
+              });
+
+              return [
+                '| Tag | Previous | Current |',
+                '| --- | --- | --- |',
+                ...rows,
+              ].join('\n');
+            };
+
+            const renderFailedRows = () => {
+              if (failedTags.length === 0) {
+                return 'No tag updates failed.\n';
+              }
+
+              const rows = failedTags.map((tag) => (
+                `| \`${tag.name}\` | \`${tag.sha.slice(0, 7)}\` | \`${shortSha}\` | ${tag.error.replace(/\n/g, ' ')} |`
+              ));
+
+              return [
+                '| Tag | Previous | Current | Error |',
+                '| --- | --- | --- | --- |',
+                ...rows,
+              ].join('\n');
+            };
+
+            await core.summary
+              .addHeading('Release Tag Advancement Report')
+              .addTable([
+                [{ data: 'Field', header: true }, { data: 'Value', header: true }],
+                ['Event', context.eventName],
+                ['Mode', tagUpdateMode],
+                ['Target commit', `\`${targetSha}\``],
+                ['Semantic release tags found', String(releaseTags.length)],
+                ['Selected tags', String(tagsToUpdate.length)],
+                ['Updated tags', String(updatedTags.length)],
+                ['Already current', String(skippedTags.length)],
+              ])
+              .addHeading('Updated Tags', 2)
+              .addRaw(`\n${renderTagRows(updatedTags, 'No tags were updated.')}\n`)
+              .addHeading('Already Current', 2)
+              .addRaw(`\n${renderTagRows(skippedTags, 'No tags already pointed at target commit.')}\n`)
+              .addHeading('Failed Updates', 2)
+              .addRaw(`\n${renderFailedRows()}\n`)
+              .write();
+
+            if (failedTags.length > 0) {
+              core.setFailed(`Failed to advance ${failedTags.length} release tag(s). See workflow summary for details.`);
+            }
