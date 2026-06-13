@@ -81,6 +81,7 @@ FOE
 ARG OPENCODE_VERSION=latest
 ARG CAVEMAN_VERSION=latest
 ARG AZURE_FOUNDRY_PROVIDER_REF=v0.4.0
+ARG PONYTAIL_VERSION=latest
 ARG ENGRAM_VERSION=latest
 ARG OPENCODE_BUILD_DIR=/usr/local/share/opencode-build
 
@@ -194,9 +195,12 @@ caveman_resolved_version=$(resolve_github_latest_version "JuliusBrussee/caveman"
 echo "CAVEMAN_RESOLVED_REF=${caveman_resolved_version}"
 echo "${caveman_resolved_version}" > /tmp/caveman_version
 
-mkdir -p "${OPENCODE_CONFIG_DIR}/plugins/caveman" "${OPENCODE_CONFIG_DIR}/commands"
+mkdir -p "${OPENCODE_CONFIG_DIR}/plugins/caveman" "${OPENCODE_CONFIG_DIR}/commands" "${OPENCODE_CONFIG_DIR}/agents"
 
 CAVEMAN_RAW_BASE="https://raw.githubusercontent.com/JuliusBrussee/caveman/refs/tags/${caveman_resolved_version}"
+
+# AGENTS.md — always-on caveman ruleset (auto-discovered by opencode)
+curl -fsSL "${CAVEMAN_RAW_BASE}/src/rules/caveman-activate.md" -o "${OPENCODE_CONFIG_DIR}/AGENTS.md" || exit 1
 
 {
   curl -fsSL "${CAVEMAN_RAW_BASE}/src/plugins/opencode/package.json" -o "${OPENCODE_CONFIG_DIR}/plugins/caveman/package.json"
@@ -207,6 +211,10 @@ CAVEMAN_RAW_BASE="https://raw.githubusercontent.com/JuliusBrussee/caveman/refs/t
   curl -fsSL "${CAVEMAN_RAW_BASE}/src/plugins/opencode/commands/caveman-review.md" -o "${OPENCODE_CONFIG_DIR}/commands/caveman-review.md"
   curl -fsSL "${CAVEMAN_RAW_BASE}/src/plugins/opencode/commands/caveman-stats.md" -o "${OPENCODE_CONFIG_DIR}/commands/caveman-stats.md"
   curl -fsSL "${CAVEMAN_RAW_BASE}/src/plugins/opencode/commands/caveman-help.md" -o "${OPENCODE_CONFIG_DIR}/commands/caveman-help.md"
+  # cavecrew subagents — strip `tools:` frontmatter (opencode rejects YAML array form)
+  curl -fsSL "${CAVEMAN_RAW_BASE}/agents/cavecrew-investigator.md" | sed '/^tools:/,/^[^ ]/ { /^tools:/d; /^ /d; }' > "${OPENCODE_CONFIG_DIR}/agents/cavecrew-investigator.md"
+  curl -fsSL "${CAVEMAN_RAW_BASE}/agents/cavecrew-builder.md" | sed '/^tools:/,/^[^ ]/ { /^tools:/d; /^ /d; }' > "${OPENCODE_CONFIG_DIR}/agents/cavecrew-builder.md"
+  curl -fsSL "${CAVEMAN_RAW_BASE}/agents/cavecrew-reviewer.md" | sed '/^tools:/,/^[^ ]/ { /^tools:/d; /^ /d; }' > "${OPENCODE_CONFIG_DIR}/agents/cavecrew-reviewer.md"
 } & wait || exit 1
 
 cat > "${OPENCODE_CONFIG_DIR}/commands/caveman-compress.md" <<'EOF'
@@ -221,6 +229,40 @@ Run the installed `caveman-compress` skill workflow against the given file path.
 Preserve code, URLs, paths, commands, and structure exactly as the skill requires.
 Overwrite the original file only if the compression succeeds, and keep the `.original.md` backup.
 EOF
+
+###
+# ponytail
+#
+ponytail_resolved_version=$(resolve_github_latest_version "DietrichGebert/ponytail" "${PONYTAIL_VERSION}") || exit 1
+echo "PONYTAIL_RESOLVED_REF=${ponytail_resolved_version}"
+
+PONYTAIL_RAW_BASE="https://raw.githubusercontent.com/DietrichGebert/ponytail/refs/tags/${ponytail_resolved_version}"
+
+mkdir -p "${OPENCODE_CONFIG_DIR}/plugins/ponytail/hooks" \
+  "${OPENCODE_CONFIG_DIR}/plugins/ponytail/skills/ponytail" \
+  "${OPENCODE_CONFIG_DIR}/commands" \
+  "${OPENCODE_CONFIG_DIR}/skills/ponytail-review" \
+  "${OPENCODE_CONFIG_DIR}/skills/ponytail-help"
+
+curl -fsSL "${PONYTAIL_RAW_BASE}/.opencode/plugins/ponytail.mjs" \
+  | sed 's|../../hooks/|./ponytail/hooks/|g' \
+  > "${OPENCODE_CONFIG_DIR}/plugins/ponytail.mjs" \
+  || exit 1
+grep -qF './ponytail/hooks/' "${OPENCODE_CONFIG_DIR}/plugins/ponytail.mjs" \
+  || {
+  echo "[ponytail] FATAL: import patch failed — ../../hooks/ not replaced. Plugin version may have changed."
+  exit 1;
+}
+
+{
+  curl -fsSL "${PONYTAIL_RAW_BASE}/hooks/ponytail-instructions.js" -o "${OPENCODE_CONFIG_DIR}/plugins/ponytail/hooks/ponytail-instructions.js"
+  curl -fsSL "${PONYTAIL_RAW_BASE}/hooks/ponytail-config.js" -o "${OPENCODE_CONFIG_DIR}/plugins/ponytail/hooks/ponytail-config.js"
+  curl -fsSL "${PONYTAIL_RAW_BASE}/skills/ponytail/SKILL.md" -o "${OPENCODE_CONFIG_DIR}/plugins/ponytail/skills/ponytail/SKILL.md"
+  curl -fsSL "${PONYTAIL_RAW_BASE}/.opencode/command/ponytail.md" -o "${OPENCODE_CONFIG_DIR}/commands/ponytail.md"
+  curl -fsSL "${PONYTAIL_RAW_BASE}/.opencode/command/ponytail-review.md" -o "${OPENCODE_CONFIG_DIR}/commands/ponytail-review.md"
+  curl -fsSL "${PONYTAIL_RAW_BASE}/skills/ponytail-review/SKILL.md" -o "${OPENCODE_CONFIG_DIR}/skills/ponytail-review/SKILL.md"
+  curl -fsSL "${PONYTAIL_RAW_BASE}/skills/ponytail-help/SKILL.md" -o "${OPENCODE_CONFIG_DIR}/skills/ponytail-help/SKILL.md"
+} & wait || exit 1
 
 ###
 # cleanup
@@ -245,6 +287,7 @@ rm -rf "${OPENCODE_BUILD_DIR}"
 cat >"${OPENCODE_CONFIG_DIR}/opencode.json" <<-'EOF'
 {
   "$schema": "https://opencode.ai/config.json",
+  "autoupdate": false,
   "plugin": [
     "file:///usr/local/bun/install/global/node_modules/opencode-gemini-auth",
     "file:///etc/opencode/plugins/caveman"
