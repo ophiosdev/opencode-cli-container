@@ -4,7 +4,7 @@ IMAGE_REF := $(IMAGE):$(TAG)
 DOCKERFILE ?= Dockerfile
 CONTEXT ?= .
 OPENCODE_VERSION ?= latest
-AZURE_FOUNDRY_PROVIDER_REF ?= v0.3.0
+AZURE_FOUNDRY_PROVIDER_REF ?= latest
 
 .PHONY: build clean
 

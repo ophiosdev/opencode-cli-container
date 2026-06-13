@@ -80,7 +80,7 @@ FOE
 
 ARG OPENCODE_VERSION=latest
 ARG CAVEMAN_VERSION=latest
-ARG AZURE_FOUNDRY_PROVIDER_REF=v0.4.0
+ARG AZURE_FOUNDRY_PROVIDER_REF=latest
 ARG PONYTAIL_VERSION=latest
 ARG ENGRAM_VERSION=latest
 ARG OPENCODE_BUILD_DIR=/usr/local/share/opencode-build
@@ -125,11 +125,14 @@ bun install -g "opencode-ai@${OPENCODE_VERSION}" || exit 1
 
 ###
 # providers
+#
 # AZURE_FOUNDRY_PROVIDER_REF: if starts with 'v' → version tag, else → branch name
 #
 (
+  azure_foundry_provider_resolved_version=$(resolve_github_latest_version "ophiosdev/azure-foundry-provider" "${AZURE_FOUNDRY_PROVIDER_REF}") || exit 1
+  echo "AZURE_FOUNDRY_PROVIDER_REF=${azure_foundry_provider_resolved_version}"
   pushd /tmp \
-  && bun install "github:ophiosdev/azure-foundry-provider#${AZURE_FOUNDRY_PROVIDER_REF}" \
+  && bun install "github:ophiosdev/azure-foundry-provider#${azure_foundry_provider_resolved_version}" \
   && cd node_modules/azure-foundry-provider \
   && bun build --outdir=dist src/index.ts \
   && mv dist "${PROVIDER_DIR}/azure-foundry-provider" \
