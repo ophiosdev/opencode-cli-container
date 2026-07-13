@@ -83,6 +83,7 @@ ARG CAVEMAN_VERSION=latest
 ARG AZURE_FOUNDRY_PROVIDER_REF=latest
 ARG PONYTAIL_VERSION=latest
 ARG ENGRAM_VERSION=latest
+ARG GRAPHIFY_VERSION=latest
 ARG OPENCODE_BUILD_DIR=/usr/local/share/opencode-build
 
 ENV OPENCODE_CONFIG_DIR=/etc/opencode
@@ -268,6 +269,45 @@ grep -qF './ponytail/hooks/' "${OPENCODE_CONFIG_DIR}/plugins/ponytail.mjs" \
 } & wait || exit 1
 
 ###
+# graphify
+#
+graphify_resolved_version=$(resolve_github_latest_version "Graphify-Labs/graphify" "${GRAPHIFY_VERSION}") || exit 1
+echo "GRAPHIFY_RESOLVED_REF=${graphify_resolved_version}"
+
+uv pip install --system graphifyy[pdf,office,svg,openai,azure,sql,postgres,terraform] || exit 1
+
+# Install graphify for opencode into a temp project dir — uses install.py's
+# own _copy_skill_file + _install_opencode_plugin logic so the SKILL.md,
+# references/ sidecar, .graphify_version stamp, and graphify.js plugin are
+# all laid down correctly by graphify itself, not reconstructed here.
+TMP_GRAPHIFY=/tmp/graphify-install
+mkdir -p "$TMP_GRAPHIFY"
+( cd "$TMP_GRAPHIFY" && graphify install --project --platform opencode ) || exit 1
+
+# Move installed artifacts to system opencode dir
+cp -r "$TMP_GRAPHIFY/.opencode/skills/graphify" "${OPENCODE_CONFIG_DIR}/skills/graphify"
+cp "$TMP_GRAPHIFY/.opencode/plugins/graphify.js" "${OPENCODE_CONFIG_DIR}/plugins/graphify.js"
+
+rm -rf "$TMP_GRAPHIFY"
+
+# Append graphify always-on section to AGENTS.md
+cat >> "${OPENCODE_CONFIG_DIR}/AGENTS.md" <<-'AGENTS_GRAPHIFY'
+
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+When the user types `/graphify`, use the installed graphify skill or instructions before doing anything else.
+
+Rules:
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- Dirty graphify-out/ files are expected after hooks or incremental updates; dirty graph files are not a reason to skip graphify. Only skip graphify if the task is about stale or incorrect graph output, or the user explicitly says not to use it.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
+AGENTS_GRAPHIFY
+
+###
 # cleanup
 rm -rf /root/.bun
 chown -Rh bun:bun "$(echo ~bun)"
@@ -293,7 +333,8 @@ cat >"${OPENCODE_CONFIG_DIR}/opencode.json" <<-'EOF'
   "autoupdate": false,
   "plugin": [
     "file:///usr/local/bun/install/global/node_modules/opencode-gemini-auth",
-    "file:///etc/opencode/plugins/caveman"
+    "file:///etc/opencode/plugins/caveman",
+    "file:///etc/opencode/plugins/graphify.js"
   ],
   "mcp": {
     "engram": {
@@ -303,7 +344,7 @@ cat >"${OPENCODE_CONFIG_DIR}/opencode.json" <<-'EOF'
         "mcp",
         "--tools=agent"
       ],
-      "enabled": true
+      "enabled": false
     },
     "sequential-thinking": {
       "type": "local",

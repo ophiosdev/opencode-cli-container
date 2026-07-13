@@ -17,6 +17,13 @@ build:
 		--build-arg AZURE_FOUNDRY_PROVIDER_REF=$(AZURE_FOUNDRY_PROVIDER_REF) \
 		$(CONTEXT)
 
+run:
+	@- docker run \
+		--rm \
+		-ti \
+		--entrypoint bash \
+		$(IMAGE_REF)
+
 clean:
 	@echo "Removing image $(IMAGE_REF) if it exists..."
 	- docker image inspect $(IMAGE_REF) >/dev/null 2>&1 && docker rmi $(IMAGE_REF) || true

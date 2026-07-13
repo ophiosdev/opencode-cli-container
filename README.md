@@ -333,21 +333,22 @@ opencodec
 
 The build bundles these tools and skills:
 
-- `opencode-ai`
-- `mise`
+- [`opencode-ai`](https://opencode.ai/)
+- [`mise`](https://mise.jdx.dev/)
 - shell bootstrap for interactive and non-interactive command execution
 - default OpenCode configuration under `/etc/opencode`
-- `engram` for persisted memory-oriented workflows
-- `aleph` tooling for large-context local analysis workflows
+- [`engram`](https://github.com/Gentleman-Programming/engram) — persisted memory-oriented workflows
+- [`aleph`](https://github.com/Hmbown/aleph) — large-context local analysis workflows
 - local MCP-backed integrations available by default
-- `python`
-- `go`
-- `ripgrep`
-- `uv`
-- `git`
+- [`python`](https://python.org)
+- [`go`](https://go.dev)
+- [`ripgrep`](https://github.com/BurntSushi/ripgrep)
+- [`uv`](https://docs.astral.sh/uv/)
+- [`git`](https://git-scm.com)
+- [`graphify`](https://github.com/Graphify-Labs/graphify) — knowledge graph for codebase architecture
 - `sudo`, `curl`, `gpg`, `make`
-- Azure Foundry provider build output
-- OpenCode skills for `stop-slop`, `aleph`, and changelog automation
+- [Azure Foundry provider](https://github.com/ophiosdev/azure-foundry-provider) build output
+- OpenCode skills for [`stop-slop`](https://github.com/hardikpandya/stop-slop), `aleph`, `graphify`, and changelog automation
 
 The repository also includes `git-export.ts`, a Bun helper script that exports a single directory from
 a GitHub repository using a treeless, sparse clone workflow.
@@ -362,7 +363,7 @@ This repo publishes container images to GitHub Container Registry from version t
 
 ## Repository Structure
 
-- `Dockerfile`: Builds the OpenCode container image and installs providers, tools, and skills
+- `Dockerfile`: Builds the OpenCode container image, generates default `opencode.json` config and AGENTS.md, and installs providers, tools, and skills
 - `entrypoint.sh`: Loads shell environment and starts `opencode`
 - `git-export.ts`: Sparse GitHub directory export helper
 - `Makefile`: Convenience targets for local image build and cleanup
@@ -402,6 +403,6 @@ test when `Dockerfile` changes.
 
 ### Build and Runtime Issues
 
-- Build failures fetching dependencies: verify network access to npm, GitHub, and other upstream sources used in the Docker build
+- Build failures fetching dependencies: verify network access to `npm`, GitHub, and other upstream sources used in the Docker build
 - Provider or skill changes upstream: rebuild the image to refresh fetched components
 - Command invocation errors: place OpenCode arguments after the image name and use `--help` to confirm supported flags
