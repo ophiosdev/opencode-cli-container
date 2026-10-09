@@ -150,14 +150,6 @@ bun install -g "opencode-ai@${OPENCODE_VERSION}" || exit 1
 bun install -g 'opencode-gemini-auth@latest' || exit 1
 
 ###
-# agent browser
-(
-  bun install -g --trust agent-browser \
-  && curl -fsSL -o /usr/local/bin/lightpanda 'https://github.com/lightpanda-io/browser/releases/download/nightly/lightpanda-x86_64-linux' \
-  && chmod a+x /usr/local/bin/lightpanda
-) || exit 1
-
-###
 # engram
 #
 engram_resolved_version=$(resolve_github_latest_version "Gentleman-Programming/engram" "${ENGRAM_VERSION}") || exit 1
@@ -357,19 +349,7 @@ cat >"${OPENCODE_CONFIG_DIR}/opencode.json" <<-EOF
         "@modelcontextprotocol/server-sequential-thinking"
       ],
       "enabled": false
-    },
-    "aleph": {
-      "type": "local",
-      "command": [
-        "aleph",
-        "--enable-actions",
-        "--workspace-mode",
-        "any",
-        "--tool-docs",
-        "concise"
-      ],
-      "enabled": false
-    },
+    }
     "msdocs": {
       "type": "remote",
       "url": "https://learn.microsoft.com/api/mcp",
@@ -398,7 +378,7 @@ COPY --chmod=0555 scripts/convert-gemini.auth.ts /usr/local/bin/convert-gemini.a
 # hadolint ignore=DL3066
 USER bun:bun
 
-RUN mise use -g --silent go@1.24 ripgrep
+RUN mise use -g --silent go@1.26 ripgrep
 
 # Set BASH_ENV so non-interactive bash shells (spawned by OpenCode CLI) source /etc/bash.bashrc
 # This ensures mise activation and PATH are available in shell commands
