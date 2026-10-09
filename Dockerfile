@@ -349,7 +349,7 @@ cat >"${OPENCODE_CONFIG_DIR}/opencode.json" <<-EOF
         "@modelcontextprotocol/server-sequential-thinking"
       ],
       "enabled": false
-    }
+    },
     "msdocs": {
       "type": "remote",
       "url": "https://learn.microsoft.com/api/mcp",
