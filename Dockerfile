@@ -3,9 +3,11 @@ FROM oven/bun:latest
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
+# hadolint ignore=DL3066
 USER root
 
 ENV DEBIAN_FRONTEND="noninteractive"
+ARG BUN_HOME=/home/bun
 ARG PYTHON_VERSION="3.12"
 ENV PYTHON_DIR="/usr/local/share/python/${PYTHON_VERSION}"
 ENV PATH="${PATH}:${PYTHON_DIR}/bin"
@@ -23,6 +25,7 @@ apt-get install \
     git \
     jq \
     libatomic1 \
+    libicu76 \
     -y
 
 apt-get install make gpg gpg-agent procps -y --no-install-recommends
@@ -88,12 +91,12 @@ ARG OPENCODE_BUILD_DIR=/usr/local/share/opencode-build
 
 ENV OPENCODE_CONFIG_DIR=/etc/opencode
 ENV OPENCODE_EXPERIMENTAL=1
-ENV ENGRAM_DATA_DIR=/home/bun/.local/share/opencode/engram
+ENV ENGRAM_DATA_DIR="${BUN_HOME}/.local/share/opencode/engram"
 ENV RTK_TELEMETRY_DISABLED=1
 
 ENV AGENT_BROWSER_ENGINE=lightpanda
 
-# hadolint ignore=DL3003,SC2164
+# hadolint ignore=DL3003,SC2164,SC2102
 RUN <<'FOE'
 
 export BUN_INSTALL=/usr/local/bun
@@ -310,7 +313,7 @@ AGENTS_GRAPHIFY
 ###
 # cleanup
 rm -rf /root/.bun
-chown -Rh bun:bun "$(echo ~bun)"
+chown -Rh bun:bun "${BUN_HOME}"
 
 FOE
 
@@ -319,7 +322,7 @@ COPY scripts "${OPENCODE_BUILD_DIR}/scripts"
 COPY skills.yaml "${OPENCODE_BUILD_DIR}/skills.yaml"
 
 RUN <<'FOE'
-source /etc/bash.bashrc
+. /etc/bash.bashrc
 
 BUN_INSTALL=/tmp/bun bun install --cwd "${OPENCODE_BUILD_DIR}/scripts" yaml || exit 1
 bun "${OPENCODE_BUILD_DIR}/scripts/install-skills.ts" || exit 1
@@ -327,9 +330,9 @@ bun "${OPENCODE_BUILD_DIR}/scripts/install-skills.ts" || exit 1
 rm -rf "${OPENCODE_BUILD_DIR}"
 
 
-cat >"${OPENCODE_CONFIG_DIR}/opencode.json" <<-'EOF'
+cat >"${OPENCODE_CONFIG_DIR}/opencode.json" <<-EOF
 {
-  "$schema": "https://opencode.ai/config.json",
+  "\$schema": "https://opencode.ai/config.json",
   "autoupdate": false,
   "plugin": [
     "file:///usr/local/bun/install/global/node_modules/opencode-gemini-auth",
@@ -375,7 +378,7 @@ cat >"${OPENCODE_CONFIG_DIR}/opencode.json" <<-'EOF'
     "jcodemunch": {
       "type": "local",
       "command": [
-        "jcodemunch-mcp", "--log-level", "WARNING", "--log-file", "/home/bun/.local/share/opencode/log/jcodemunch.log"
+        "jcodemunch-mcp", "--log-level", "WARNING", "--log-file", "${BUN_HOME}/.local/share/opencode/log/jcodemunch.log"
       ],
       "environment": {
         "JCODEMUNCH_SHARE_SAVINGS": "0",
@@ -392,6 +395,7 @@ FOE
 COPY --chmod=0555 scripts/entrypoint.sh /entrypoint.sh
 COPY --chmod=0555 scripts/convert-gemini.auth.ts /usr/local/bin/convert-gemini.auth.ts
 
+# hadolint ignore=DL3066
 USER bun:bun
 
 RUN mise use -g --silent go@1.24 ripgrep
