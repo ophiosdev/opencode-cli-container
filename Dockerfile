@@ -88,8 +88,8 @@ ARG PONYTAIL_VERSION=latest
 ARG ENGRAM_VERSION=latest
 ARG GRAPHIFY_VERSION=latest
 ARG OPENCODE_BUILD_DIR=/usr/local/share/opencode-build
+ARG OPENCODE_CONFIG_DIR=/etc/opencode
 
-ENV OPENCODE_CONFIG_DIR=/etc/opencode
 ENV OPENCODE_EXPERIMENTAL=1
 ENV ENGRAM_DATA_DIR="${BUN_HOME}/.local/share/opencode/engram"
 ENV RTK_TELEMETRY_DISABLED=1
@@ -125,7 +125,7 @@ resolve_github_latest_version() {
 mkdir -p "${BUN_INSTALL}" "${OPENCODE_CONFIG_DIR}" "${OPENCODE_PLUGINS_DIR}" "${PROVIDER_DIR}"
 chmod 0777 "${OPENCODE_CONFIG_DIR}"
 
-bun install -g "opencode-ai@${OPENCODE_VERSION}" || exit 1
+bun install -g --trust "@opencode/cli@${OPENCODE_VERSION}" || exit 1
 
 ###
 # providers
@@ -325,46 +325,48 @@ rm -rf "${OPENCODE_BUILD_DIR}"
 cat >"${OPENCODE_CONFIG_DIR}/opencode.json" <<-EOF
 {
   "\$schema": "https://opencode.ai/config.json",
-  "autoupdate": false,
-  "plugin": [
+  "update": "disable",
+  "plugins": [
     "file:///usr/local/bun/install/global/node_modules/opencode-gemini-auth",
     "file:///etc/opencode/plugins/caveman",
     "file:///etc/opencode/plugins/graphify.js"
   ],
   "mcp": {
-    "engram": {
-      "type": "local",
-      "command": [
-        "engram",
-        "mcp",
-        "--tools=agent"
-      ],
-      "enabled": false
-    },
-    "sequential-thinking": {
-      "type": "local",
-      "command": [
-        "bun",
-        "x",
-        "@modelcontextprotocol/server-sequential-thinking"
-      ],
-      "enabled": false
-    },
-    "msdocs": {
-      "type": "remote",
-      "url": "https://learn.microsoft.com/api/mcp",
-      "enabled": false
-    },
-    "jcodemunch": {
-      "type": "local",
-      "command": [
-        "jcodemunch-mcp", "--log-level", "WARNING", "--log-file", "${BUN_HOME}/.local/share/opencode/log/jcodemunch.log"
-      ],
-      "environment": {
-        "JCODEMUNCH_SHARE_SAVINGS": "0",
-        "JCODEMUNCH_TRUSTED_FOLDERS": "/work"
+    "servers": {
+      "engram": {
+        "type": "local",
+        "command": [
+          "engram",
+          "mcp",
+          "--tools=agent"
+        ],
+        "disabled": true
       },
-      "enabled": false
+      "sequential-thinking": {
+        "type": "local",
+        "command": [
+          "bun",
+          "x",
+          "@modelcontextprotocol/server-sequential-thinking"
+        ],
+        "disabled": true
+      },
+      "msdocs": {
+        "type": "remote",
+        "url": "https://learn.microsoft.com/api/mcp",
+        "disabled": true
+      },
+      "jcodemunch": {
+        "type": "local",
+        "command": [
+          "jcodemunch-mcp", "--log-level", "WARNING", "--log-file", "${BUN_HOME}/.local/share/opencode/log/jcodemunch.log"
+        ],
+        "environment": {
+          "JCODEMUNCH_SHARE_SAVINGS": "0",
+          "JCODEMUNCH_TRUSTED_FOLDERS": "/work"
+        },
+        "disabled": true
+      }
     }
   }
 }
