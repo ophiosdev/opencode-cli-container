@@ -1,5 +1,9 @@
+.opencode
 **/.env*
 **/.venv
 **/venv
-.opencode
 **/*.log
+**/node_modules
+**/dist
+**/coverage
+*.tsbuildinfo
