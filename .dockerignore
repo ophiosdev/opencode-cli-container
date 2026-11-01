@@ -6,3 +6,6 @@
 !scripts/git-export.ts
 !scripts/convert-gemini.auth.ts
 !scripts/install-skills.ts
+!plugins/
+!plugins/**/package.json
+!plugins/**/*.ts

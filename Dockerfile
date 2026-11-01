@@ -312,6 +312,8 @@ FOE
 # hadolint ignore=DL3045
 COPY scripts "${OPENCODE_BUILD_DIR}/scripts"
 COPY skills.yaml "${OPENCODE_BUILD_DIR}/skills.yaml"
+COPY plugins/project-plan/package.json "${OPENCODE_CONFIG_DIR}/plugins/project-plan/package.json"
+COPY plugins/project-plan/src/index.ts "${OPENCODE_CONFIG_DIR}/plugins/project-plan/src/index.ts"
 
 RUN <<'FOE'
 . /etc/bash.bashrc
@@ -329,7 +331,8 @@ cat >"${OPENCODE_CONFIG_DIR}/opencode.json" <<-EOF
   "plugins": [
     "file:///usr/local/bun/install/global/node_modules/opencode-gemini-auth",
     "file:///etc/opencode/plugins/caveman",
-    "file:///etc/opencode/plugins/graphify.js"
+    "file:///etc/opencode/plugins/graphify.js",
+    "-opencode.plan"
   ],
   "mcp": {
     "servers": {
