@@ -32,8 +32,10 @@ jobs:
         with:
           files: |
             Dockerfile
+            .dockerignore
             skills.yaml
             scripts/**
+            plugins/**
 
       - name: Setup toolchain with mise
         uses: jdx/mise-action@v5
