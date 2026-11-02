@@ -19,6 +19,14 @@ jobs:
         id: checkout
         uses: actions/checkout@v7
 
+      - name: Determine if this tag is the newest in the repo
+        id: newest_tag
+        run: |
+          git fetch --tags --quiet
+          if [ "$(git tag -l 'v*' --sort=-version:refname | head -n1)" = "${GITHUB_REF}" ]; then
+            echo "IS_NEWEST=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Get the version
         id: get_version
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
@@ -42,12 +50,13 @@ jobs:
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          flavor: latest=false
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
             type=sha
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ steps.newest_tag.outputs.IS_NEWEST == 'true' }}
           labels: |
             org.opencontainers.image.maintainer=Ophios GmbH
       - name: Build and push Docker image
