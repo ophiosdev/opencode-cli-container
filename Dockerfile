@@ -236,32 +236,51 @@ ponytail_resolved_version=$(resolve_github_latest_version "DietrichGebert/ponyta
 echo "PONYTAIL_RESOLVED_REF=${ponytail_resolved_version}"
 
 PONYTAIL_RAW_BASE="https://raw.githubusercontent.com/DietrichGebert/ponytail/refs/tags/${ponytail_resolved_version}"
+PONYTAIL_PLUGIN_DIR="${OPENCODE_CONFIG_DIR}/plugins/ponytail"
 
-mkdir -p "${OPENCODE_CONFIG_DIR}/plugins/ponytail/hooks" \
-  "${OPENCODE_CONFIG_DIR}/plugins/ponytail/skills/ponytail" \
-  "${OPENCODE_CONFIG_DIR}/commands" \
+mkdir -p "${PONYTAIL_PLUGIN_DIR}/.opencode/plugins" \
+  "${PONYTAIL_PLUGIN_DIR}/.opencode/command" \
+  "${PONYTAIL_PLUGIN_DIR}/hooks" \
+  "${PONYTAIL_PLUGIN_DIR}/skills/ponytail" \
+  "${OPENCODE_CONFIG_DIR}/skills/ponytail" \
   "${OPENCODE_CONFIG_DIR}/skills/ponytail-review" \
   "${OPENCODE_CONFIG_DIR}/skills/ponytail-help"
 
 curl -fsSL "${PONYTAIL_RAW_BASE}/.opencode/plugins/ponytail.mjs" \
-  | sed 's|../../hooks/|./ponytail/hooks/|g' \
-  > "${OPENCODE_CONFIG_DIR}/plugins/ponytail.mjs" \
+  -o "${PONYTAIL_PLUGIN_DIR}/.opencode/plugins/ponytail.mjs" \
   || exit 1
-grep -qF './ponytail/hooks/' "${OPENCODE_CONFIG_DIR}/plugins/ponytail.mjs" \
-  || {
-  echo "[ponytail] FATAL: import patch failed — ../../hooks/ not replaced. Plugin version may have changed."
-  exit 1;
-}
+curl -fsSL "${PONYTAIL_RAW_BASE}/.opencode/plugins/ponytail-frontmatter.cjs" \
+  -o "${PONYTAIL_PLUGIN_DIR}/.opencode/plugins/ponytail-frontmatter.cjs" \
+  || exit 1
 
-{
-  curl -fsSL "${PONYTAIL_RAW_BASE}/hooks/ponytail-instructions.js" -o "${OPENCODE_CONFIG_DIR}/plugins/ponytail/hooks/ponytail-instructions.js"
-  curl -fsSL "${PONYTAIL_RAW_BASE}/hooks/ponytail-config.js" -o "${OPENCODE_CONFIG_DIR}/plugins/ponytail/hooks/ponytail-config.js"
-  curl -fsSL "${PONYTAIL_RAW_BASE}/skills/ponytail/SKILL.md" -o "${OPENCODE_CONFIG_DIR}/plugins/ponytail/skills/ponytail/SKILL.md"
-  curl -fsSL "${PONYTAIL_RAW_BASE}/.opencode/command/ponytail.md" -o "${OPENCODE_CONFIG_DIR}/commands/ponytail.md"
-  curl -fsSL "${PONYTAIL_RAW_BASE}/.opencode/command/ponytail-review.md" -o "${OPENCODE_CONFIG_DIR}/commands/ponytail-review.md"
-  curl -fsSL "${PONYTAIL_RAW_BASE}/skills/ponytail-review/SKILL.md" -o "${OPENCODE_CONFIG_DIR}/skills/ponytail-review/SKILL.md"
-  curl -fsSL "${PONYTAIL_RAW_BASE}/skills/ponytail-help/SKILL.md" -o "${OPENCODE_CONFIG_DIR}/skills/ponytail-help/SKILL.md"
-} & wait || exit 1
+cat > "${PONYTAIL_PLUGIN_DIR}/index.mjs" <<'EOF'
+export { default } from "./.opencode/plugins/ponytail.mjs";
+EOF
+
+curl -fsSL "${PONYTAIL_RAW_BASE}/hooks/ponytail-instructions.js" \
+  -o "${PONYTAIL_PLUGIN_DIR}/hooks/ponytail-instructions.js" \
+  || exit 1
+curl -fsSL "${PONYTAIL_RAW_BASE}/hooks/ponytail-config.js" \
+  -o "${PONYTAIL_PLUGIN_DIR}/hooks/ponytail-config.js" \
+  || exit 1
+curl -fsSL "${PONYTAIL_RAW_BASE}/skills/ponytail/SKILL.md" \
+  -o "${PONYTAIL_PLUGIN_DIR}/skills/ponytail/SKILL.md" \
+  || exit 1
+cp "${PONYTAIL_PLUGIN_DIR}/skills/ponytail/SKILL.md" \
+  "${OPENCODE_CONFIG_DIR}/skills/ponytail/SKILL.md" \
+  || exit 1
+curl -fsSL "${PONYTAIL_RAW_BASE}/.opencode/command/ponytail.md" \
+  -o "${PONYTAIL_PLUGIN_DIR}/.opencode/command/ponytail.md" \
+  || exit 1
+curl -fsSL "${PONYTAIL_RAW_BASE}/.opencode/command/ponytail-review.md" \
+  -o "${PONYTAIL_PLUGIN_DIR}/.opencode/command/ponytail-review.md" \
+  || exit 1
+curl -fsSL "${PONYTAIL_RAW_BASE}/skills/ponytail-review/SKILL.md" \
+  -o "${OPENCODE_CONFIG_DIR}/skills/ponytail-review/SKILL.md" \
+  || exit 1
+curl -fsSL "${PONYTAIL_RAW_BASE}/skills/ponytail-help/SKILL.md" \
+  -o "${OPENCODE_CONFIG_DIR}/skills/ponytail-help/SKILL.md" \
+  || exit 1
 
 ###
 # graphify
@@ -331,7 +350,6 @@ cat >"${OPENCODE_CONFIG_DIR}/opencode.json" <<-EOF
   "plugins": [
     "file:///usr/local/bun/install/global/node_modules/opencode-gemini-auth",
     "file:///etc/opencode/plugins/caveman",
-    "file:///etc/opencode/plugins/graphify.js",
     "-opencode.plan"
   ],
   "mcp": {
