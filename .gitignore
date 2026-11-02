@@ -3,3 +3,4 @@
 **/venv
 .opencode
 **/*.log
+node_modules
