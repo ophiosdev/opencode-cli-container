@@ -16,6 +16,10 @@ on:
         options:
           - latest-per-major
           - all-release-tags
+      tag_exclude_pattern:
+        description: Regex for tags that never move (defaults to variable TAG_EXCLUDE_PATTERN)
+        required: false
+        default: ''
 
 permissions:
   pull-requests: read
@@ -67,11 +71,14 @@ jobs:
         env:
           TARGET_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.merge_commit_sha || github.sha }}
           TAG_UPDATE_MODE: ${{ inputs.tag_update_mode || vars.TAG_UPDATE_MODE || 'latest-per-major' }}
+          TAG_EXCLUDE_PATTERN: ${{ inputs.tag_exclude_pattern || vars.TAG_EXCLUDE_PATTERN || '' }}
         with:
           github-token: ${{ steps.app_token.outputs.token }}
           script: |
             const targetSha = process.env.TARGET_SHA;
             const tagUpdateMode = process.env.TAG_UPDATE_MODE;
+            const excludePattern = process.env.TAG_EXCLUDE_PATTERN;
+            const excludeRegex = excludePattern ? new RegExp(excludePattern) : null; // throws on invalid pattern → job fails, good
             const semverTagPattern = /^v(\d+)\.(\d+)\.(\d+)$/;
             const shortSha = targetSha.slice(0, 7);
 
@@ -100,6 +107,7 @@ jobs:
                 };
               })
               .filter(Boolean)
+              .filter((tag) => !(excludeRegex && excludeRegex.test(tag.name)))
               .sort((left, right) => compareVersions(left, right));
 
             if (releaseTags.length === 0) {
@@ -110,6 +118,7 @@ jobs:
                   [{ data: 'Field', header: true }, { data: 'Value', header: true }],
                   ['Event', context.eventName],
                   ['Mode', tagUpdateMode],
+                  ['Exclusion pattern', excludePattern || 'none'],
                   ['Target commit', `\`${targetSha}\``],
                   ['Semantic release tags found', '0'],
                   ['Updated tags', '0'],
@@ -214,6 +223,7 @@ jobs:
                 [{ data: 'Field', header: true }, { data: 'Value', header: true }],
                 ['Event', context.eventName],
                 ['Mode', tagUpdateMode],
+                ['Exclusion pattern', excludePattern || 'none'],
                 ['Target commit', `\`${targetSha}\``],
                 ['Semantic release tags found', String(releaseTags.length)],
                 ['Selected tags', String(tagsToUpdate.length)],
