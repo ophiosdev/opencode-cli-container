@@ -1,4 +1,4 @@
-name: Create Linked Tag from Upstream Repo
+name: Create Linked Tags from Upstream Repo
 
 on:
   schedule:
@@ -17,41 +17,49 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Get latest stable release from public upstream repo
-        id: get_release_b
+      - name: Get latest releases per major from public upstream repo
+        id: get_releases
         uses: ophiosdev/github-action-latest-release@master
         with:
           # Reads the UPSTREAM_REPO variable from your repository settings.
           # This variable is REQUIRED for the workflow to function.
           repository: ${{ vars.UPSTREAM_REPO }}
           includes: ${{ vars.VERSION_REGEX || '^v?[0-9]+\.[0-9]+\.[0-9]+$' }}
+          # With groupBy=major the 'release' output is a JSON array holding the
+          # latest release per major, e.g. [{release: v2.2.5}, {release: v1.19.5}].
+          groupBy: major
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Validate Release Tag Format
-        id: validate_tag
+      - name: Build tag plan
+        id: plan_tags
         env:
-          VERSION_REGEX: ${{ vars.VERSION_REGEX || '^v?[0-9]+\.[0-9]+\.[0-9]+$' }}
+          RELEASES_JSON: ${{ steps.get_releases.outputs.release }}
         run: |
-          TAG_NAME="${{ steps.get_release_b.outputs.release }}"
+          set -euo pipefail
 
-          echo "Validating release tag format for latest release from upstream repository: $TAG_NAME"
-          if [[ -z "$TAG_NAME" ]]; then
-            echo "No valid release found from upstream repository. Exiting."
-            echo "is_valid=false" >> "$GITHUB_OUTPUT"
+          # No releases reported → nothing to do, silently.
+          if [[ -z "$RELEASES_JSON" || "$RELEASES_JSON" == "null" ]]; then
+            echo "pairs=[]" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          if [[ "$TAG_NAME" =~ $VERSION_REGEX ]]; then
-            echo "Tag '$TAG_NAME' matches the required format."
-            echo "is_valid=true" >> "$GITHUB_OUTPUT"
-            # Extract matched portion (Bash stores full match in BASH_REMATCH[0])
-            new_version="${BASH_REMATCH[0]}"
-            echo "Extracted version: $new_version"
-            echo "new_version=$new_version" >> "$GITHUB_OUTPUT"
-          else
-            echo "Tag '$TAG_NAME' does not match the required format. Ignoring."
-            echo "is_valid=false" >> "$GITHUB_OUTPUT"
+          # Latest v1.x release goes to the v1 branch, every other major > 1
+          # gets its own tag on master. Everything else (e.g. v0.x) is ignored.
+          pairs="$(
+            printf '%s' "$RELEASES_JSON" | jq -c '
+              def norm: "v" + (. | sub("^v"; ""));
+              map({tag: (.release | norm), major: (.release | ltrimstr("v") | split(".")[0] | tonumber)}) as $all
+              | [($all[] | select(.major == 1) | {tag, branch: "v1"})]
+                + [($all[] | select(.major > 1) | {tag, branch: "master"})]
+            '
+          )"
+
+          if [[ "$pairs" == "[]" ]]; then
+            echo "pairs=[]" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+
+          echo "pairs=$pairs" >> "$GITHUB_OUTPUT"
 
       - name: Generate GitHub App token
         id: app_token
@@ -62,41 +70,35 @@ jobs:
 
       - name: Checkout repository code
         # We need to check out the code to be able to check for existing tags and push new ones.
-        if: steps.validate_tag.outputs.is_valid == 'true'
+        if: steps.plan_tags.outputs.pairs != '[]'
         uses: actions/checkout@v7
         with:
+          # Full fetch so tags resolve to the head of both branches.
           fetch-depth: 0
           fetch-tags: true
           token: ${{ steps.app_token.outputs.token }}
 
-      - name: Check if tag already exists locally
-        id: check_tag
-        if: steps.validate_tag.outputs.is_valid == 'true'
+      - name: Create and push new tags
+        # Skips tags that already exist; never moves an existing tag
+        # (tag advancement is owned by advance-tags.yml).
+        if: steps.plan_tags.outputs.pairs != '[]'
         env:
-          RELEASE_TAG: ${{ steps.validate_tag.outputs.new_version }}
+          PAIRS: ${{ steps.plan_tags.outputs.pairs }}
         run: |
-          RELEASE_TAG="v${RELEASE_TAG#v}" # Ensure the tag starts with 'v'
-          if git tag --list | grep -q "^${RELEASE_TAG}$"; then
-            echo "Tag '$RELEASE_TAG' already exists. No action needed."
-            echo "create_tag=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "New valid tag '$RELEASE_TAG' detected!"
-            echo "create_tag=true" >> "$GITHUB_OUTPUT"
-          fi
+          set -euo pipefail
 
-      - name: Create and push new tag
-        id: create_and_push
-        # This step only runs if the tag is valid AND new.
-        if: steps.check_tag.outputs.create_tag == 'true'
-        env:
-          RELEASE_TAG: ${{ steps.validate_tag.outputs.new_version }}
-        run: |
-          RELEASE_TAG="v${RELEASE_TAG#v}" # Ensure the tag starts with 'v'
+          printf '%s' "$PAIRS" | jq -c '.[]' | while read -r entry; do
+            tag="$(jq -r '.tag' <<<"$entry")"
+            branch="$(jq -r '.branch' <<<"$entry")"
+            target="$(git rev-parse --verify "refs/remotes/origin/$branch")"
 
-          echo "Creating tag: $RELEASE_TAG"
-          git tag "$RELEASE_TAG"
+            if git rev-parse --verify --quiet "refs/tags/$tag"; then
+              echo "Tag '$tag' already exists. No action needed."
+              continue
+            fi
 
-          echo "Pushing tag to remote..."
-          git push origin "$RELEASE_TAG"
-
-          echo "Successfully created and pushed tag '$RELEASE_TAG'."
+            echo "Creating tag '$tag' at head of '$branch' (${target:0:7})."
+            git tag "$tag" "$target"
+            git push origin "$tag"
+            echo "Successfully created and pushed tag '$tag'."
+          done
