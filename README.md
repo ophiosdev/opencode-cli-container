@@ -357,7 +357,7 @@ a GitHub repository using a treeless, sparse clone workflow.
 
 This repo publishes container images to GitHub Container Registry from version tags.
 
-- `create-linked-release.yml` checks the latest matching upstream release on a schedule and creates a local tag when a new one appears
+- `create-linked-release.yml` checks the latest matching upstream release per major (`groupBy=major`) on a schedule: the latest v1.x release is tagged at the head of the `v1` branch and every newer major gets its own tag at the head of `master` (existing tags are never moved)
 - `build-and-deploy.yml` runs on `v*` tags, validates semver, and publishes the image to `ghcr.io/ophiosdev/opencode-cli`
 - Published tags include semver variants, a commit SHA tag, and `latest` when enabled for the default branch
 
