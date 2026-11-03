@@ -6,13 +6,13 @@ on:
   workflow_dispatch:
     inputs:
       images_to_keep:
-        description: Maximum number of tagged images to keep (high water mark, 0 = no limit)
+        description: Maximum number of tagged images to keep per major version (high water mark, 0 = no limit)
         required: false
         default: '4'
       retention_days:
         description: Delete images older than this many days (0 = no age limit)
         required: false
-        default: '15'
+        default: '0'
       delete_unversioned:
         description: Delete unversioned images (SHA-only or untagged)
         required: false
@@ -47,6 +47,7 @@ jobs:
           RETENTION_DAYS: ${{ env.RETENTION_DAYS }}
           DELETE_UNVERSIONED: ${{ env.DELETE_UNVERSIONED }}
           DRY_RUN: ${{ env.DRY_RUN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           result-encoding: string
           script: |
@@ -120,6 +121,84 @@ jobs:
               });
             };
 
+            // Registry token acquisition for OCI/Docker manifest queries
+            const getRegistryToken = async () => {
+              const token = process.env.GITHUB_TOKEN;
+              const repoOwner = owner.toLowerCase();
+              const repoPkg = packageName.toLowerCase();
+              const tokenUrl = `https://ghcr.io/token?service=ghcr.io&scope=repository:${repoOwner}/${repoPkg}:pull`;
+
+              if (token) {
+                try {
+                  const basicAuth = Buffer.from(`${context.actor || owner}:${token}`).toString('base64');
+                  const res = await fetch(tokenUrl, {
+                    headers: { Authorization: `Basic ${basicAuth}` },
+                  });
+                  if (res.ok) {
+                    const data = await res.json();
+                    if (data.token) return data.token;
+                  }
+                } catch (_) {}
+
+                try {
+                  const res = await fetch(tokenUrl, {
+                    headers: { Authorization: `Bearer ${token}` },
+                  });
+                  if (res.ok) {
+                    const data = await res.json();
+                    if (data.token) return data.token;
+                  }
+                } catch (_) {}
+              }
+
+              // Fallback for public packages (anonymous token request)
+              try {
+                const res = await fetch(tokenUrl);
+                if (res.ok) {
+                  const data = await res.json();
+                  if (data.token) return data.token;
+                }
+              } catch (_) {}
+
+              return token ? Buffer.from(token).toString('base64') : null;
+            };
+
+            // Fetch manifest list / index from GHCR
+            const fetchManifest = async (regToken, reference) => {
+              const repoOwner = owner.toLowerCase();
+              const repoPkg = packageName.toLowerCase();
+              const manifestUrl = `https://ghcr.io/v2/${repoOwner}/${repoPkg}/manifests/${reference}`;
+              const acceptHeaders = [
+                'application/vnd.docker.distribution.manifest.list.v2+json',
+                'application/vnd.oci.image.index.v1+json',
+                'application/vnd.docker.distribution.manifest.v2+json',
+                'application/vnd.oci.image.manifest.v1+json',
+              ].join(', ');
+
+              const headers = { Accept: acceptHeaders };
+              if (regToken) {
+                headers['Authorization'] = `Bearer ${regToken}`;
+              }
+
+              let res = await fetch(manifestUrl, { headers });
+
+              if (res.status === 401 && process.env.GITHUB_TOKEN) {
+                const rawB64 = Buffer.from(process.env.GITHUB_TOKEN).toString('base64');
+                res = await fetch(manifestUrl, {
+                  headers: {
+                    Accept: acceptHeaders,
+                    Authorization: `Bearer ${rawB64}`,
+                  },
+                });
+              }
+
+              if (!res.ok) {
+                throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+              }
+
+              return await res.json();
+            };
+
             const isShaTag = (value) => /^sha-[0-9a-f]{7,}$/i.test(value);
             const isUnversioned = (version) => {
               const tags = version.metadata?.container?.tags ?? [];
@@ -142,7 +221,7 @@ jobs:
                 minor: match[2] !== undefined ? parseInt(match[2], 10) : 0,
                 patch: match[3] !== undefined ? parseInt(match[3], 10) : 0,
                 prerelease: match[4] || null,
-                original: tag
+                original: tag,
               };
             };
 
@@ -164,6 +243,11 @@ jobs:
                 .filter(Boolean)
                 .sort((a, b) => compareSemver(b, a));
               return semverTags[0] || null;
+            };
+
+            const getMajorGroup = (version) => {
+              const semver = extractSemver(version);
+              return semver ? String(semver.major) : 'unclassified';
             };
 
             const { scope, versions } = await paginateVersions();
@@ -199,10 +283,25 @@ jobs:
               core.info(`Retention filter: ${candidates.length} of ${taggedVersions.length} versions within ${retentionDays} days`);
             }
 
-            // Apply count cap
-            if (imagesToKeep > 0 && candidates.length > imagesToKeep) {
-              candidates = candidates.slice(0, imagesToKeep);
-              core.info(`Count cap: limiting to ${imagesToKeep} newest versions`);
+            // Apply count cap per detected major version
+            if (imagesToKeep > 0) {
+              const groupedCandidates = new Map();
+              for (const version of candidates) {
+                const majorGroup = getMajorGroup(version);
+                if (!groupedCandidates.has(majorGroup)) {
+                  groupedCandidates.set(majorGroup, []);
+                }
+                groupedCandidates.get(majorGroup).push(version);
+              }
+
+              const limitedCandidates = [];
+              for (const [majorGroup, versionsForMajor] of groupedCandidates.entries()) {
+                const keptForMajor = versionsForMajor.slice(0, imagesToKeep);
+                limitedCandidates.push(...keptForMajor);
+                core.info(`Count cap: keeping ${keptForMajor.length} version(s) for major ${majorGroup}`);
+              }
+
+              candidates = limitedCandidates;
             }
 
             // Safety: ensure at least 1 tagged image
@@ -215,28 +314,78 @@ jobs:
             const keepIds = new Set(candidates.map(v => v.id));
             core.info(`Will keep ${keepIds.size} tagged versions`);
 
+            // Inspect multi-arch manifests of retained tagged images to protect child platform layers
+            const referencedDigests = new Set();
+            let fetchFailed = false;
+
+            const registryToken = await getRegistryToken();
+            const refsToInspect = new Set();
+            for (const v of candidates) {
+              const tags = v.metadata?.container?.tags ?? [];
+              if (tags.length > 0) {
+                refsToInspect.add(tags[0]);
+              } else if (v.name) {
+                refsToInspect.add(v.name);
+              }
+            }
+
+            if (refsToInspect.size > 0) {
+              core.info('');
+              core.info(`=== Resolving Multi-Architecture Manifests (${refsToInspect.size} retained images) ===`);
+              for (const ref of refsToInspect) {
+                try {
+                  const manifest = await fetchManifest(registryToken, ref);
+                  if (manifest && Array.isArray(manifest.manifests)) {
+                    for (const m of manifest.manifests) {
+                      if (m.digest) {
+                        referencedDigests.add(m.digest);
+                      }
+                    }
+                    core.info(`Protected ${manifest.manifests.length} child platform manifest(s) referenced by ${ref}`);
+                  } else {
+                    core.info(`Image ${ref} is single-architecture`);
+                  }
+                } catch (err) {
+                  core.warning(`Failed to inspect manifest for ${ref}: ${err.message}`);
+                  fetchFailed = true;
+                }
+              }
+              core.info(`Total protected child digests: ${referencedDigests.size}`);
+            }
+
+            if (fetchFailed) {
+              core.warning('One or more manifests could not be verified. Skipping deletion of untagged images to prevent breaking multi-arch images.');
+            }
+
             // Process all versions
             let unversionedDeleted = 0;
             let ageBasedDeleted = 0;
             let retainedCount = 0;
+            let retainedChildrenCount = 0;
 
             core.info('');
             core.info('=== Unversioned (SHA-only or untagged) ===');
             if (unversionedVersions.length === 0) {
               core.info('None found.');
-            } else if (deleteUnversioned) {
-              for (const version of unversionedVersions) {
-                const tags = version.metadata?.container?.tags ?? [];
-                core.info(`${dryRun ? '[DRY RUN] Would delete' : 'Deleting'} unversioned version ${version.id} with tags: ${tags.join(', ') || '(none)'}`);
-                if (!dryRun) {
-                  await deleteVersion(scope, version.id);
-                }
-                unversionedDeleted += 1;
-              }
             } else {
               for (const version of unversionedVersions) {
                 const tags = version.metadata?.container?.tags ?? [];
-                core.info(`Keeping unversioned version ${version.id} with tags: ${tags.join(', ') || '(none)'} (DELETE_UNVERSIONED is false)`);
+                const isChildOfKept = referencedDigests.has(version.name);
+
+                if (isChildOfKept) {
+                  core.info(`Keeping child platform manifest ${version.id} (${version.name}) referenced by retained tagged image`);
+                  retainedChildrenCount += 1;
+                } else if (deleteUnversioned && !fetchFailed) {
+                  core.info(`${dryRun ? '[DRY RUN] Would delete' : 'Deleting'} unversioned version ${version.id} (${version.name}) with tags: ${tags.join(', ') || '(none)'}`);
+                  if (!dryRun) {
+                    await deleteVersion(scope, version.id);
+                  }
+                  unversionedDeleted += 1;
+                } else if (deleteUnversioned && fetchFailed) {
+                  core.info(`Skipping unversioned version ${version.id} due to manifest verification safety lock`);
+                } else {
+                  core.info(`Keeping unversioned version ${version.id} with tags: ${tags.join(', ') || '(none)'} (DELETE_UNVERSIONED is false)`);
+                }
               }
             }
 
@@ -262,13 +411,15 @@ jobs:
               core.info(`Unversioned deleted: ${unversionedDeleted}`);
             }
             core.info(`Age/count-based deleted: ${ageBasedDeleted}`);
-            core.info(`Retained: ${retainedCount} (all tagged)`);
+            core.info(`Retained tagged images: ${retainedCount}`);
+            core.info(`Retained child platform images: ${retainedChildrenCount}`);
 
             return JSON.stringify({
               totalBefore: versions.length,
               unversionedDeleted,
               ageBasedDeleted,
               retainedCount,
+              retainedChildrenCount,
             });
 
       - name: Generate cleanup report
@@ -296,7 +447,7 @@ jobs:
             summary += '### Configuration\n';
             summary += '| Setting | Value |\n';
             summary += '|---------|-------|\n';
-            summary += `| Images to keep | ${imagesToKeep} |\n`;
+            summary += `| Images to keep per major | ${imagesToKeep} |\n`;
             summary += `| Retention days | ${retentionDays} |\n`;
             summary += `| Delete unversioned | ${deleteUnversioned} |\n\n`;
 
@@ -312,6 +463,9 @@ jobs:
               }
               summary += `| Age/count-based deleted | ${data.ageBasedDeleted || 0} |\n`;
               summary += `| **Retained tagged images** | **${data.retainedCount || 0}** |\n`;
+              if (data.retainedChildrenCount !== undefined) {
+                summary += `| **Retained child platform images** | **${data.retainedChildrenCount || 0}** |\n`;
+              }
             }
 
             core.summary.addRaw(summary).write();
