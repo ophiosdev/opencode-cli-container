@@ -7,11 +7,11 @@
     ".": "./src/index.ts"
   },
   "peerDependencies": {
-    "@opencode/plugin": "2.2.3",
+    "@opencode/plugin": "2.3.0",
     "effect": "4.0.6"
   },
   "devDependencies": {
-    "@opencode/plugin": "2.2.3",
+    "@opencode/plugin": "2.3.0",
     "effect": "4.0.6"
   },
   "scripts": {
