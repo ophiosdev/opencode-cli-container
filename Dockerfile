@@ -1,5 +1,19 @@
 # hadolint ignore=DL3007
 ARG BUN_VERSION="latest"
+
+# llm-proxy: localhost reverse proxy with classical-only TLS (rustls/ring)
+# so Azure never sees a multi-segment PQC ClientHello.
+FROM rust:1-trixie AS proxy-builder
+WORKDIR /src/llm-proxy
+COPY llm-proxy/Cargo.toml ./
+COPY llm-proxy/src/ ./src/
+RUN <<'FOE'
+set -e
+cargo build --release
+strip target/release/llm-proxy
+cp target/release/llm-proxy /llm-proxy
+FOE
+
 FROM oven/bun:${BUN_VERSION}
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -395,6 +409,8 @@ cat >"${OPENCODE_CONFIG_DIR}/opencode.json" <<-EOF
 EOF
 
 FOE
+
+COPY --chmod=0555 --from=proxy-builder /llm-proxy /usr/local/bin/llm-proxy
 
 COPY --chmod=0555 scripts/entrypoint.sh /entrypoint.sh
 COPY --chmod=0555 scripts/convert-gemini.auth.ts /usr/local/bin/convert-gemini.auth.ts
