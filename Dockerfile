@@ -1,5 +1,6 @@
 # hadolint ignore=DL3007
-FROM oven/bun:latest
+ARG BUN_VERSION="latest"
+FROM oven/bun:${BUN_VERSION}
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
