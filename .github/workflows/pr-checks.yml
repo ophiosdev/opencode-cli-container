@@ -46,4 +46,4 @@ jobs:
       - name: Build Docker image if Docker assets changed
         if: steps.changed-files.outputs.any_changed == 'true'
         run: |
-          docker build -t opencode-cli-pr:latest .
+          docker build -t opencode-cli-pr:latest --build-arg "BUN_VERSION=${{ vars.BUN_VERSION || 'latest' }}" .
