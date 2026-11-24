@@ -50,3 +50,15 @@ skills:
       - type: git-export
         repo: JuliusBrussee/caveman
         path: skills/cavecrew
+
+  - name: moli-webfetch
+    steps:
+      - type: git-export
+        repo: lexmount/moli
+        path: skills/moli-webfetch
+
+  - name: moli-websearch
+    steps:
+      - type: git-export
+        repo: lexmount/moli
+        path: skills/moli-websearch

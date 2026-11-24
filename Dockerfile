@@ -33,16 +33,23 @@ ln -s /usr/local/bin/bun /usr/local/bin/node
 ln -s /usr/local/bin/bun /usr/local/bin/npx
 
 apt-get update
-apt-get install \
+apt-get install -y --no-install-recommends \
     sudo \
     curl \
     git \
     jq \
     libatomic1 \
     libicu76 \
-    -y
-
-apt-get install make gpg gpg-agent procps -y --no-install-recommends
+    make \
+    gpg \
+    gpg-agent \
+    procps \
+    ca-certificates \
+    libfontconfig1 \
+    libfreetype6 \
+    libpng16-16t64 \
+    fontconfig \
+    fonts-dejavu-core
 
 rm -rf /var/lib/apt/lists/* /var/cache/apt
 
@@ -95,6 +102,7 @@ EOF
 
 FOE
 
+ARG MOLI_VERSION=latest
 ARG OPENCODE_VERSION=latest
 ARG CAVEMAN_VERSION=latest
 ARG AZURE_FOUNDRY_PROVIDER_REF=latest
@@ -107,8 +115,6 @@ ARG OPENCODE_CONFIG_DIR=/etc/opencode
 ENV OPENCODE_EXPERIMENTAL=1
 ENV ENGRAM_DATA_DIR="${BUN_HOME}/.local/share/opencode/engram"
 ENV RTK_TELEMETRY_DISABLED=1
-
-ENV AGENT_BROWSER_ENGINE=lightpanda
 
 # hadolint ignore=DL3003,SC2164,SC2102
 RUN <<'FOE'
@@ -295,6 +301,23 @@ curl -fsSL "${PONYTAIL_RAW_BASE}/skills/ponytail-review/SKILL.md" \
 curl -fsSL "${PONYTAIL_RAW_BASE}/skills/ponytail-help/SKILL.md" \
   -o "${OPENCODE_CONFIG_DIR}/skills/ponytail-help/SKILL.md" \
   || exit 1
+
+###
+# moli
+#
+moli_resolved_version=$(resolve_github_latest_version "lexmount/moli" "${MOLI_VERSION}") || exit 1
+moli_url="https://github.com/lexmount/moli/releases/download/${moli_resolved_version}/moli-x86_64-unknown-linux-gnu.tar.gz"
+curl -fsSL "${moli_url}" | tar -xz -C /usr/local/bin --strip-components=1 --wildcards '*/moli' || exit 1
+chmod +x /usr/local/bin/moli || exit 1
+moli --version || exit 1
+
+# Append moli always-on section to AGENTS.md
+cat >> "${OPENCODE_CONFIG_DIR}/AGENTS.md" <<-'AGENTS_MOLI'
+
+## moli
+
+For live websites or web research, use the installed moli skills: `moli-webfetch` for fetching/capturing JS-rendered pages, `moli-websearch` for keyword/image search. Prefer `moli fetch` over raw curl for JS-rendered content.
+AGENTS_MOLI
 
 ###
 # graphify
