@@ -103,6 +103,7 @@ EOF
 FOE
 
 ARG MOLI_VERSION=latest
+ARG ANYDOC_VERSION=latest
 ARG OPENCODE_VERSION=latest
 ARG CAVEMAN_VERSION=latest
 ARG AZURE_FOUNDRY_PROVIDER_REF=latest
@@ -318,6 +319,22 @@ cat >> "${OPENCODE_CONFIG_DIR}/AGENTS.md" <<-'AGENTS_MOLI'
 
 For live websites or web research, use the installed moli skills: `moli-webfetch` for fetching/capturing JS-rendered pages, `moli-websearch` for keyword/image search. Prefer `moli fetch` over raw curl for JS-rendered content.
 AGENTS_MOLI
+
+###
+# anydoc
+#
+anydoc_resolved_version=$(resolve_github_latest_version "firecrawl/anydoc" "${ANYDOC_VERSION}") || exit 1
+anydoc_version="${anydoc_resolved_version#v}"
+bun install -g --trust "@firecrawl/anydoc@${anydoc_version}" || exit 1
+anydoc --help > /dev/null || exit 1
+
+# Append anydoc always-on section to AGENTS.md
+cat >> "${OPENCODE_CONFIG_DIR}/AGENTS.md" <<-'AGENTS_ANYDOC'
+
+## anydoc
+
+For office documents, spreadsheets, presentations, ebooks, or PDFs you cannot read directly, use the installed `convert-documents-to-markdown` skill and the `anydoc` CLI to convert to Markdown. For large documents write to a file with `-o` and read the parts you need.
+AGENTS_ANYDOC
 
 ###
 # graphify

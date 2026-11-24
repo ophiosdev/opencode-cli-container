@@ -62,3 +62,9 @@ skills:
       - type: git-export
         repo: lexmount/moli
         path: skills/moli-websearch
+
+  - name: convert-documents-to-markdown
+    steps:
+      - type: git-export
+        repo: firecrawl/anydoc
+        path: skills/convert-documents-to-markdown
