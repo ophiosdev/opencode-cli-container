@@ -8,3 +8,4 @@
 llm-proxy/target/
 **/coverage
 *.tsbuildinfo
+graphify*
