@@ -5,12 +5,11 @@ ARG BUN_VERSION="latest"
 # so Azure never sees a multi-segment PQC ClientHello.
 FROM rust:1-trixie AS proxy-builder
 WORKDIR /src/llm-proxy
-COPY llm-proxy/Cargo.toml ./
+COPY llm-proxy/Cargo.toml llm-proxy/Cargo.lock ./
 COPY llm-proxy/src/ ./src/
 RUN <<'FOE'
 set -e
-cargo build --release
-strip target/release/llm-proxy
+cargo build --release --locked
 cp target/release/llm-proxy /llm-proxy
 FOE
 
@@ -412,6 +411,21 @@ FOE
 
 COPY --chmod=0555 --from=proxy-builder /llm-proxy /usr/local/bin/llm-proxy
 
+# MITM CA for llm-proxy, created once per image (not on every start).
+# Private key stays in the image, 0600 bun-owned; rotation = rebuild.
+RUN mkdir -p /usr/local/share/llm-proxy \
+  && openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+    -keyout /usr/local/share/llm-proxy/mitm-ca-key.pem \
+    -out /usr/local/share/ca-certificates/llm-proxy-mitm.crt \
+    -days 3650 -nodes -subj "/CN=llm-proxy MITM CA" \
+    -addext "basicConstraints=critical,CA:TRUE" \
+    -addext "keyUsage=critical,digitalSignature,cRLSign,keyCertSign" \
+    -addext "subjectKeyIdentifier=hash" \
+    -addext "authorityKeyIdentifier=keyid:always" \
+  && chmod 600 /usr/local/share/llm-proxy/mitm-ca-key.pem \
+  && chown bun:bun /usr/local/share/llm-proxy/mitm-ca-key.pem \
+  && update-ca-certificates
+
 COPY --chmod=0555 scripts/entrypoint.sh /entrypoint.sh
 COPY --chmod=0555 scripts/convert-gemini.auth.ts /usr/local/bin/convert-gemini.auth.ts
 
@@ -420,9 +434,23 @@ USER bun:bun
 
 RUN mise use -g --silent go@1.26 ripgrep
 
+###
+# Image clean up (always keep last just before ENTRYPOINT or ENV settings)
+# hadolint ignore=DL3066
+USER root:root
+
+RUN rm -rf /tmp/* /var/tmp/* \
+ && rm -rf "${BUN_HOME}/.cache/go-build" "${BUN_HOME}/.cache/uv" "${BUN_HOME}/.cache/pip" \
+ && rm -rf "${BUN_HOME}/.local/share/mise/downloads" "${BUN_HOME}/.cache/mise" \
+ && find "${BUN_HOME}" \! -path '*/llm-proxy/*' -name '__pycache__' -type d -prune -exec rm -rf {} +
+
+# hadolint ignore=DL3066
+USER bun:bun
+
 # Set BASH_ENV so non-interactive bash shells (spawned by OpenCode CLI) source /etc/bash.bashrc
 # This ensures mise activation and PATH are available in shell commands
 ENV BASH_ENV=/etc/bash.bashrc
 ENV SHELL=/bin/bash
+ENV LLM_PROXY_LOGFILE=/tmp/llm_proxy.log
 
 ENTRYPOINT [ "/entrypoint.sh" ]
