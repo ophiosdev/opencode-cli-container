@@ -9,3 +9,8 @@
 !plugins/
 !plugins/**/package.json
 !plugins/**/*.ts
+!llm-proxy/
+!llm-proxy/Cargo.toml
+!llm-proxy/Cargo.lock
+!llm-proxy/src/
+!llm-proxy/src/main.rs
