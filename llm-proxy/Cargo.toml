@@ -12,7 +12,7 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls-no-p
 hyper = "1"
 hyper-util = { version = "0.1", features = ["tokio"] }
 tokio-rustls = "0.26"
-webpki-roots = "0.26"
+webpki-roots = "1.0"
 rcgen = { version = "0.14", default-features = false, features = ["ring", "pem", "x509-parser"] }
 time = "0.3"
 base64 = "0.22"
