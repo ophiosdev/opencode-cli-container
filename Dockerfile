@@ -307,7 +307,7 @@ curl -fsSL "${PONYTAIL_RAW_BASE}/skills/ponytail-help/SKILL.md" \
 #
 moli_resolved_version=$(resolve_github_latest_version "lexmount/moli" "${MOLI_VERSION}") || exit 1
 moli_url="https://github.com/lexmount/moli/releases/download/${moli_resolved_version}/moli-x86_64-unknown-linux-gnu.tar.gz"
-curl -fsSL "${moli_url}" | tar -C /usr/local/bin -xvzf - || exit 1
+curl -fsSL "${moli_url}" | tar -xz -C /usr/local/bin --strip-components=1 --wildcards '*/moli' || exit 1
 chmod +x /usr/local/bin/moli || exit 1
 moli --version || exit 1
 
