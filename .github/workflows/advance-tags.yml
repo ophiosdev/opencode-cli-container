@@ -36,6 +36,7 @@ jobs:
         uses: tj-actions/changed-files@v47
         with:
           files: |
+            llm-proxy/**
             Dockerfile
             skills.yaml
             scripts/**
