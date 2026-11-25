@@ -20,6 +20,7 @@ All configuration is done with environment variables. Below, in alphabetical ord
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
+| `LLM_PROXY_DISABLE_CERT_VERIFICATION` | verify | `1` (also `true`/`yes`/`on`) disables upstream TLS certificate-chain validation for the proxy's own upstream connections (both MITM upstreams and forwarded requests). Default verifies. |
 | `LLM_PROXY_ENABLED` | enabled | `off`, `0`, `false` or `no` disables the proxy entirely: it is not started and no proxy environment is enforced. |
 | `LLM_PROXY_LISTEN_ADDR` | `127.0.0.1:8899` | Address the proxy listens on; also the value `HTTP_PROXY` is forced to. |
 | `LLM_PROXY_INTERCEPT_SUFFIXES` | everything | Comma-separated domain suffixes (e.g. `cognitiveservices.azure.com`) whose TLS is terminated locally. Empty means all hosts. |

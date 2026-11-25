@@ -24,9 +24,10 @@ use base64::Engine as _;
 use rcgen::{
     CertificateParams, DnType, ExtendedKeyUsagePurpose, Issuer, KeyPair, SanType,
 };
-use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName, UnixTime};
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::version::{TLS12, TLS13};
-use rustls::{ClientConfig, RootCertStore, ServerConfig, SupportedProtocolVersion};
+use rustls::{ClientConfig, DigitallySignedStruct, RootCertStore, ServerConfig, SignatureScheme, SupportedProtocolVersion};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -482,6 +483,74 @@ struct MitmState {
     cache: Mutex<HashMap<String, Arc<ServerConfig>>>,
 }
 
+/// Insecure opt-out selected with LLM_PROXY_DISABLE_CERT_VERIFICATION=1:
+/// upstream TLS certificates are accepted without chain validation.
+#[derive(Debug)]
+struct NoCertVerifier;
+
+impl ServerCertVerifier for NoCertVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        let provider = rustls::crypto::ring::default_provider();
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &provider.signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        let provider = rustls::crypto::ring::default_provider();
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &provider.signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        rustls::crypto::ring::default_provider()
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+}
+
+fn cert_verification_disabled_raw(raw: &str) -> bool {
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
+
+/// True when LLM_PROXY_DISABLE_CERT_VERIFICATION opts out of upstream
+/// TLS certificate-chain validation. Default (unset/anything else): verify.
+fn upstream_cert_verification_disabled() -> bool {
+    env::var("LLM_PROXY_DISABLE_CERT_VERIFICATION")
+        .is_ok_and(|v| cert_verification_disabled_raw(&v))
+}
+
 fn init_mitm(versions: Vec<&'static SupportedProtocolVersion>) -> Option<Arc<MitmState>> {
     if env::var("LLM_PROXY_MITM").is_ok_and(|v| v.eq_ignore_ascii_case("off")) {
         return None;
@@ -864,11 +933,18 @@ async fn mitm_relay(
     };
     tokio::spawn(async move {
         let setup = async {
-            let mut roots = RootCertStore::empty();
-            roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-            let cc = ClientConfig::builder_with_protocol_versions(&mitm.versions)
-                .with_root_certificates(roots)
-                .with_no_client_auth();
+            let cc = if upstream_cert_verification_disabled() {
+                ClientConfig::builder_with_protocol_versions(&mitm.versions)
+                    .dangerous()
+                    .with_custom_certificate_verifier(Arc::new(NoCertVerifier))
+                    .with_no_client_auth()
+            } else {
+                let mut roots = RootCertStore::empty();
+                roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+                ClientConfig::builder_with_protocol_versions(&mitm.versions)
+                    .with_root_certificates(roots)
+                    .with_no_client_auth()
+            };
             let server_name: ServerName<'static> = match ServerName::try_from(host.clone()) {
                 Ok(n) => n,
                 Err(_) => match host.parse::<IpAddr>() {
@@ -1142,6 +1218,9 @@ async fn main() {
     let (tls_min, tls_max, tls_versions) = tls_bounds_or_exit();
 
     let mut client_builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
+    if upstream_cert_verification_disabled() {
+        client_builder = client_builder.danger_accept_invalid_certs(true);
+    }
     if let Some(v) = tls_min {
         client_builder = client_builder.min_tls_version(reqwest_tls_version(v));
     }
@@ -1206,6 +1285,13 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind(&listen_addr)
         .await
         .expect("bind listen address");
+
+    if upstream_cert_verification_disabled() {
+        log_line!(
+            Level::Warn,
+            "llm-proxy: upstream TLS certificate verification DISABLED via LLM_PROXY_DISABLE_CERT_VERIFICATION"
+        );
+    }
 
     log_line!(
         Level::Info,
@@ -1555,5 +1641,15 @@ mod tests {
         assert!(Level::Error < Level::Warn);
         assert!(Level::Warn < Level::Info);
         assert!(Level::Info < Level::Debug);
+    }
+
+    #[test]
+    fn parses_disable_cert_verification() {
+        for on in ["1", "true", "TRUE", "yes", "on", " On "] {
+            assert!(cert_verification_disabled_raw(on), "{on}");
+        }
+        for off in ["", " ", "0", "false", "no", "off", "2"] {
+            assert!(!cert_verification_disabled_raw(off), "{off}");
+        }
     }
 }
