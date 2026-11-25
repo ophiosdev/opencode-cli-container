@@ -933,6 +933,12 @@ async fn mitm_relay(
     };
     tokio::spawn(async move {
         let setup = async {
+            if upstream_cert_verification_disabled() {
+                log_line!(
+                    Level::Debug,
+                    "llm-proxy: MITM upstream for {host}: skipping certificate-chain verification (NoCertVerifier)"
+                );
+            }
             let cc = if upstream_cert_verification_disabled() {
                 ClientConfig::builder_with_protocol_versions(&mitm.versions)
                     .dangerous()
@@ -998,7 +1004,7 @@ async fn connect_tunnel(req: Request<Body>, state: AppState) -> Response {
             } else {
                 format!("{authority}:443")
             };
-            log_line!(Level::Info, "llm-proxy: CONNECT {authority} (MITM {host})");
+            log_line!(Level::Info, "llm-proxy: CONNECT {authority} (MITM {host}){verify_note}", verify_note = if upstream_cert_verification_disabled() { " cert-verify=off" } else { "" });
             return mitm_relay(host, upstream_addr, on_upgrade, &state).await;
         }
     }
@@ -1168,6 +1174,9 @@ async fn proxy_handler(
         .unwrap_or_else(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response())
 }
 
+/// Proxy version, printed in the startup log. Bump manually on releases.
+const VERSION: &str = "0.1.0";
+
 #[tokio::main]
 async fn main() {
     init_logging();
@@ -1295,7 +1304,7 @@ async fn main() {
 
     log_line!(
         Level::Info,
-        "llm-proxy (rust) listening on http://{listen_addr} -> {route} (upstream proxy: {proxy_desc}, mitm: {mitm_desc}, tls: {tls_desc}, level: {level_desc}, llm-logs: {log_display})",
+        "llm-proxy (rust v{VERSION}) listening on http://{listen_addr} -> {route} (upstream proxy: {proxy_desc}, mitm: {mitm_desc}, tls: {tls_desc}, level: {level_desc}, llm-logs: {log_display})",
         route = upstream.as_deref().unwrap_or("direct"),
         log_display = log_path.as_deref().unwrap_or("disabled")
     );
