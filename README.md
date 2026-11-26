@@ -417,6 +417,8 @@ Configured checks include:
 
 - General file hygiene checks from `pre-commit-hooks`
 - YAML linting with `yamllint`
+- `skills.yaml` schema validation with `check-jsonschema`
+- TypeScript linting of `scripts/` with `eslint` (`bun run lint` needs `bun install --cwd scripts` once)
 - Dockerfile linting with `hadolint`
 - Markdown linting with `markdownlint-cli2`
 - GitHub Actions validation with `actionlint`
