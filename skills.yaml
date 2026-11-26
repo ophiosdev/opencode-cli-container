@@ -49,6 +49,18 @@ skills:
             repo: JuliusBrussee/caveman
             path: skills/cavecrew
 
+      - name: ultracave
+        steps:
+          - type: git-export
+            repo: JuliusBrussee/caveman
+            path: skills/ultracave
+
+      - name: megacave
+        steps:
+          - type: git-export
+            repo: JuliusBrussee/caveman
+            path: skills/megacave
+
   - group: moli
     skills:
       - name: moli-webfetch

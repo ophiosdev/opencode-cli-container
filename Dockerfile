@@ -224,12 +224,16 @@ curl -fsSL "${CAVEMAN_RAW_BASE}/src/rules/caveman-activate.md" >> "${OPENCODE_CO
 {
   curl -fsSL "${CAVEMAN_RAW_BASE}/src/plugins/opencode/package.json" -o "${OPENCODE_CONFIG_DIR}/plugins/caveman/package.json"
   curl -fsSL "${CAVEMAN_RAW_BASE}/src/plugins/opencode/plugin.js" -o "${OPENCODE_CONFIG_DIR}/plugins/caveman/plugin.js"
+  curl -fsSL "${CAVEMAN_RAW_BASE}/src/plugins/opencode/server.js" -o "${OPENCODE_CONFIG_DIR}/plugins/caveman/server.js"
   curl -fsSL "${CAVEMAN_RAW_BASE}/src/hooks/caveman-config.js" -o "${OPENCODE_CONFIG_DIR}/plugins/caveman/caveman-config.cjs"
+  curl -fsSL "${CAVEMAN_RAW_BASE}/src/hooks/caveman-parse.js" -o "${OPENCODE_CONFIG_DIR}/plugins/caveman/caveman-parse.cjs"
   curl -fsSL "${CAVEMAN_RAW_BASE}/src/plugins/opencode/commands/caveman.md" -o "${OPENCODE_CONFIG_DIR}/commands/caveman.md"
   curl -fsSL "${CAVEMAN_RAW_BASE}/src/plugins/opencode/commands/caveman-commit.md" -o "${OPENCODE_CONFIG_DIR}/commands/caveman-commit.md"
   curl -fsSL "${CAVEMAN_RAW_BASE}/src/plugins/opencode/commands/caveman-review.md" -o "${OPENCODE_CONFIG_DIR}/commands/caveman-review.md"
   curl -fsSL "${CAVEMAN_RAW_BASE}/src/plugins/opencode/commands/caveman-stats.md" -o "${OPENCODE_CONFIG_DIR}/commands/caveman-stats.md"
   curl -fsSL "${CAVEMAN_RAW_BASE}/src/plugins/opencode/commands/caveman-help.md" -o "${OPENCODE_CONFIG_DIR}/commands/caveman-help.md"
+  curl -fsSL "${CAVEMAN_RAW_BASE}/src/plugins/opencode/commands/ultracave.md" -o "${OPENCODE_CONFIG_DIR}/commands/ultracave.md"
+  curl -fsSL "${CAVEMAN_RAW_BASE}/src/plugins/opencode/commands/megacave.md" -o "${OPENCODE_CONFIG_DIR}/commands/megacave.md"
   # cavecrew subagents — strip `tools:` frontmatter (opencode rejects YAML array form)
   curl -fsSL "${CAVEMAN_RAW_BASE}/agents/cavecrew-investigator.md" | sed '/^tools:/,/^[^ ]/ { /^tools:/d; /^ /d; }' > "${OPENCODE_CONFIG_DIR}/agents/cavecrew-investigator.md"
   curl -fsSL "${CAVEMAN_RAW_BASE}/agents/cavecrew-builder.md" | sed '/^tools:/,/^[^ ]/ { /^tools:/d; /^ /d; }' > "${OPENCODE_CONFIG_DIR}/agents/cavecrew-builder.md"
@@ -358,7 +362,6 @@ cat >"${OPENCODE_CONFIG_DIR}/opencode.json" <<-EOF
   ],
   "plugins": [
     "file:///usr/local/bun/install/global/node_modules/opencode-gemini-auth",
-    "file:///etc/opencode/plugins/caveman",
     "-opencode.plan"
   ],
   "mcp": {
