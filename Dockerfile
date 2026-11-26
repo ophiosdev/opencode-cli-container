@@ -349,7 +349,6 @@ bun "${OPENCODE_BUILD_DIR}/scripts/install-skills.ts" || exit 1
 
 rm -rf "${OPENCODE_BUILD_DIR}"
 
-
 cat >"${OPENCODE_CONFIG_DIR}/opencode.json" <<-EOF
 {
   "\$schema": "https://opencode.ai/config.json",
