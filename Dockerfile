@@ -106,7 +106,7 @@ ARG MOLI_VERSION=latest
 ARG ANYDOC_VERSION=latest
 ARG OPENCODE_VERSION=latest
 ARG CAVEMAN_VERSION=latest
-ARG AZURE_FOUNDRY_PROVIDER_REF=latest
+ARG AZURE_FOUNDRY_PROVIDER_VERSION=latest
 ARG PONYTAIL_VERSION=latest
 ARG ENGRAM_VERSION=latest
 ARG GRAPHIFY_VERSION=latest
@@ -151,11 +151,11 @@ bun install -g --trust "@opencode/cli@${OPENCODE_VERSION}" || exit 1
 ###
 # providers
 #
-# AZURE_FOUNDRY_PROVIDER_REF: if starts with 'v' → version tag, else → branch name
+# AZURE_FOUNDRY_PROVIDER_VERSION: if starts with 'v' → version tag, else → branch name
 #
 (
-  azure_foundry_provider_resolved_version=$(resolve_github_latest_version "ophiosdev/azure-foundry-provider" "${AZURE_FOUNDRY_PROVIDER_REF}") || exit 1
-  echo "AZURE_FOUNDRY_PROVIDER_REF=${azure_foundry_provider_resolved_version}"
+  azure_foundry_provider_resolved_version=$(resolve_github_latest_version "ophiosdev/azure-foundry-provider" "${AZURE_FOUNDRY_PROVIDER_VERSION}") || exit 1
+  echo "AZURE_FOUNDRY_PROVIDER_VERSION=${azure_foundry_provider_resolved_version}"
   pushd /tmp \
   && bun install "github:ophiosdev/azure-foundry-provider#${azure_foundry_provider_resolved_version}" \
   && cd node_modules/azure-foundry-provider \
