@@ -1,0 +1,176 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ophiosdev/opencode-cli/skills.schema.json",
+  "title": "skills.yaml manifest",
+  "description": "Skill installer manifest consumed by scripts/install-skills.ts. skills[] holds plain skills (- name) and named groups (- group) in install order; guidance order follows manifest order with a group's agents_md landing where the group sits, before its skills' own agents_md. Parse-time mirror of the installer; runtime-only checks (unique skill/group names, `..` traversal escapes, RegExp validity, repo existence, downloads) live in scripts/install-skills.ts.",
+  "type": "object",
+  "required": ["skills"],
+  "additionalProperties": false,
+  "properties": {
+    "skills": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/entry" }
+    },
+    "agents_md": { "$ref": "#/$defs/agentsMd" }
+  },
+  "$defs": {
+    "agentsMd": {
+      "type": "string",
+      "pattern": ".*\\S.*",
+      "not": {
+        "anyOf": [
+          { "pattern": "install-skills:agents-md:start" },
+          { "pattern": "install-skills:agents-md:end" }
+        ]
+      },
+      "description": "Markdown appended to the managed AGENTS.md block. Non-blank; must not contain the installer's reserved markers."
+    },
+    "skillName": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!\\.{1,2}$)[^/\\\\]+$",
+      "description": "Skill directory name: no / or \\, never . or .. ."
+    },
+    "relativeFile": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/).+$",
+      "description": "Relative staged-file path. Must not be absolute; `..` escapes fail at install time."
+    },
+    "downloadStep": {
+      "type": "object",
+      "required": ["type", "url", "dest"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "download" },
+        "url": { "type": "string", "minLength": 1, "description": "http(s) URL fetched into the staging dir." },
+        "dest": { "$ref": "#/$defs/relativeFile" }
+      }
+    },
+    "gitExportUrlStep": {
+      "type": "object",
+      "required": ["type", "url"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "git-export" },
+        "url": { "type": "string", "minLength": 1, "description": "Full GitHub URL of the skill tree to export." }
+      }
+    },
+    "gitExportRepoStep": {
+      "type": "object",
+      "required": ["type", "repo", "path"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "git-export" },
+        "repo": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+          "description": "GitHub owner/repo. Unpinned means the latest release (falls back to HEAD)."
+        },
+        "path": { "type": "string", "minLength": 1, "description": "Subtree inside the repo to export." },
+        "version": { "type": "string", "minLength": 1, "description": "Git ref to pin. Defaults to the latest release." }
+      }
+    },
+    "uvPipStep": {
+      "type": "object",
+      "required": ["type", "packages"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "uv-pip" },
+        "packages": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "replaceStep": {
+      "type": "object",
+      "required": ["type", "file", "from", "to"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "replace" },
+        "file": { "$ref": "#/$defs/relativeFile" },
+        "from": { "type": "string", "minLength": 1, "description": "Literal (non-regex) text to replace." },
+        "to": { "type": "string", "description": "Replacement text; may be empty." },
+        "expected": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Optional exact occurrence count; any other count fails the install. When omitted, all occurrences are replaced but at least one is required."
+        }
+      }
+    },
+    "assertAbsentStep": {
+      "type": "object",
+      "required": ["type", "file", "pattern"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "assert-absent" },
+        "file": { "$ref": "#/$defs/relativeFile" },
+        "pattern": { "type": "string", "minLength": 1, "description": "JavaScript RegExp; the install fails when it matches." }
+      }
+    },
+    "shellStep": {
+      "type": "object",
+      "required": ["type", "commands"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "shell" },
+        "commands": {
+          "type": "string",
+          "pattern": ".*\\S.*",
+          "description": "bash -c body. Staging dir is the cwd; OPENCODE_CONFIG_DIR, SKILL_NAME and SKILL_STAGING_DIR are set. Non-zero exit fails the build. Only for tools that must install themselves."
+        }
+      }
+    },
+    "step": {
+      "oneOf": [
+        { "$ref": "#/$defs/downloadStep" },
+        { "$ref": "#/$defs/gitExportUrlStep" },
+        { "$ref": "#/$defs/gitExportRepoStep" },
+        { "$ref": "#/$defs/uvPipStep" },
+        { "$ref": "#/$defs/replaceStep" },
+        { "$ref": "#/$defs/assertAbsentStep" },
+        { "$ref": "#/$defs/shellStep" }
+      ],
+      "description": "Install steps run in order. Shell steps merge staged files over the skill dir instead of replacing it."
+    },
+    "skill": {
+      "type": "object",
+      "required": ["name", "steps"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "$ref": "#/$defs/skillName" },
+        "steps": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/step" },
+          "description": "Steps may be empty (export-only skill)."
+        },
+        "agents_md": { "$ref": "#/$defs/agentsMd" }
+      }
+    },
+    "group": {
+      "type": "object",
+      "required": ["group", "skills"],
+      "additionalProperties": false,
+      "description": "A group installs its skills in order but installs nothing itself. Its agents_md is shared guidance landing once where the group sits.",
+      "properties": {
+        "group": {
+          "type": "string",
+          "pattern": ".*\\S.*",
+          "description": "Group label. Must be unique in the manifest; must not collide with step/name keys."
+        },
+        "skills": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/skill" },
+          "description": "Grouped skills, installed in order. Groups cannot nest."
+        },
+        "agents_md": { "$ref": "#/$defs/agentsMd" }
+      }
+    },
+    "entry": {
+      "oneOf": [{ "$ref": "#/$defs/skill" }, { "$ref": "#/$defs/group" }]
+    }
+  }
+}
