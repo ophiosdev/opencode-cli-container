@@ -317,7 +317,15 @@ cat >> "${OPENCODE_CONFIG_DIR}/AGENTS.md" <<-'AGENTS_MOLI'
 
 ## moli
 
-For live websites or web research, use the installed moli skills: `moli-webfetch` for fetching/capturing JS-rendered pages, `moli-websearch` for keyword/image search. Prefer `moli fetch` over raw curl for JS-rendered content.
+`moli` is preinstalled on PATH (`moli --version`). Invoke it directly as `moli ...`.
+If unavailable, stop and report it as blocked. Do not reinstall, upgrade, or fetch an
+installer without explicit user approval.
+
+For live websites or web research, use the installed moli skills: `moli-webfetch`
+for fetching/capturing JS-rendered pages, `moli-websearch` for keyword/image search.
+
+Prefer `moli fetch` over raw curl for JS-rendered content.
+
 AGENTS_MOLI
 
 ###
@@ -333,7 +341,13 @@ cat >> "${OPENCODE_CONFIG_DIR}/AGENTS.md" <<-'AGENTS_ANYDOC'
 
 ## anydoc
 
-For office documents, spreadsheets, presentations, ebooks, or PDFs you cannot read directly, use the installed `convert-documents-to-markdown` skill and the `anydoc` CLI to convert to Markdown. For large documents write to a file with `-o` and read the parts you need.
+`anydoc` is preinstalled on PATH (`anydoc --help`). Invoke it directly as `anydoc ...`.
+Do not use `npx`/`bunx`, reinstall, or upgrade without explicit user approval.
+
+For office documents, spreadsheets, presentations, ebooks, or PDFs you cannot read directly,
+use the installed `convert-documents-to-markdown` skill and the `anydoc` CLI to convert to Markdown.
+For large documents write to a file with `-o` and read the parts you need.
+
 AGENTS_ANYDOC
 
 ###
@@ -394,6 +408,13 @@ RUN <<'FOE'
 BUN_INSTALL=/tmp/bun bun install --cwd "${OPENCODE_BUILD_DIR}/scripts" yaml || exit 1
 bun "${OPENCODE_BUILD_DIR}/scripts/install-skills.ts" || exit 1
 
+# Patch vendored skill: anydoc binary is preinstalled on PATH, so drop upstream npx fallback.
+ANYDOC_SKILL="${OPENCODE_CONFIG_DIR}/skills/convert-documents-to-markdown/SKILL.md"
+grep -q 'npx -y @firecrawl/anydoc' "$ANYDOC_SKILL" || { echo "anydoc skill patch: expected npx example not found" >&2; exit 1; }
+sed -i 's/npx -y @firecrawl\/anydoc/anydoc/g' "$ANYDOC_SKILL" || exit 1
+sed -i 's/It needs Node 20+ and no install:/It is preinstalled on PATH; invoke it directly, never via npx\/bunx:/' "$ANYDOC_SKILL" || exit 1
+! grep -q 'npx.*@firecrawl/anydoc' "$ANYDOC_SKILL" || { echo "anydoc skill patch: npx fallback still present" >&2; exit 1; }
+
 rm -rf "${OPENCODE_BUILD_DIR}"
 
 
@@ -401,6 +422,9 @@ cat >"${OPENCODE_CONFIG_DIR}/opencode.json" <<-EOF
 {
   "\$schema": "https://opencode.ai/config.json",
   "update": "disable",
+  "instructions": [
+    "/etc/opencode/AGENTS.md"
+  ],
   "plugins": [
     "file:///usr/local/bun/install/global/node_modules/opencode-gemini-auth",
     "file:///etc/opencode/plugins/caveman",
