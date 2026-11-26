@@ -213,14 +213,13 @@ bun install -g --trust skills@latest
 #
 caveman_resolved_version=$(resolve_github_latest_version "JuliusBrussee/caveman" "${CAVEMAN_VERSION}") || exit 1
 echo "CAVEMAN_RESOLVED_REF=${caveman_resolved_version}"
-echo "${caveman_resolved_version}" > /tmp/caveman_version
 
 mkdir -p "${OPENCODE_CONFIG_DIR}/plugins/caveman" "${OPENCODE_CONFIG_DIR}/commands" "${OPENCODE_CONFIG_DIR}/agents"
 
 CAVEMAN_RAW_BASE="https://raw.githubusercontent.com/JuliusBrussee/caveman/refs/tags/${caveman_resolved_version}"
 
 # AGENTS.md — always-on caveman ruleset (auto-discovered by opencode)
-curl -fsSL "${CAVEMAN_RAW_BASE}/src/rules/caveman-activate.md" -o "${OPENCODE_CONFIG_DIR}/AGENTS.md" || exit 1
+curl -fsSL "${CAVEMAN_RAW_BASE}/src/rules/caveman-activate.md" >> "${OPENCODE_CONFIG_DIR}/AGENTS.md" || exit 1
 
 {
   curl -fsSL "${CAVEMAN_RAW_BASE}/src/plugins/opencode/package.json" -o "${OPENCODE_CONFIG_DIR}/plugins/caveman/package.json"
@@ -312,22 +311,6 @@ curl -fsSL "${moli_url}" | tar -xz -C /usr/local/bin --strip-components=1 --wild
 chmod +x /usr/local/bin/moli || exit 1
 moli --version || exit 1
 
-# Append moli always-on section to AGENTS.md
-cat >> "${OPENCODE_CONFIG_DIR}/AGENTS.md" <<-'AGENTS_MOLI'
-
-## moli
-
-`moli` is preinstalled on PATH (`moli --version`). Invoke it directly as `moli ...`.
-If unavailable, stop and report it as blocked. Do not reinstall, upgrade, or fetch an
-installer without explicit user approval.
-
-For live websites or web research, use the installed moli skills: `moli-webfetch`
-for fetching/capturing JS-rendered pages, `moli-websearch` for keyword/image search.
-
-Prefer `moli fetch` over raw curl for JS-rendered content.
-
-AGENTS_MOLI
-
 ###
 # anydoc
 #
@@ -335,20 +318,6 @@ anydoc_resolved_version=$(resolve_github_latest_version "firecrawl/anydoc" "${AN
 anydoc_version="${anydoc_resolved_version#v}"
 bun install -g --trust "@firecrawl/anydoc@${anydoc_version}" || exit 1
 anydoc --help > /dev/null || exit 1
-
-# Append anydoc always-on section to AGENTS.md
-cat >> "${OPENCODE_CONFIG_DIR}/AGENTS.md" <<-'AGENTS_ANYDOC'
-
-## anydoc
-
-`anydoc` is preinstalled on PATH (`anydoc --help`). Invoke it directly as `anydoc ...`.
-Do not use `npx`/`bunx`, reinstall, or upgrade without explicit user approval.
-
-For office documents, spreadsheets, presentations, ebooks, or PDFs you cannot read directly,
-use the installed `convert-documents-to-markdown` skill and the `anydoc` CLI to convert to Markdown.
-For large documents write to a file with `-o` and read the parts you need.
-
-AGENTS_ANYDOC
 
 ###
 # graphify
@@ -358,36 +327,6 @@ echo "GRAPHIFY_RESOLVED_REF=${graphify_resolved_version}"
 
 uv pip install --system graphifyy[pdf,office,svg,openai,azure,sql,postgres,terraform] || exit 1
 
-# Install graphify for opencode into a temp project dir — uses install.py's
-# own _copy_skill_file + _install_opencode_plugin logic so the SKILL.md,
-# references/ sidecar, .graphify_version stamp, and graphify.js plugin are
-# all laid down correctly by graphify itself, not reconstructed here.
-TMP_GRAPHIFY=/tmp/graphify-install
-mkdir -p "$TMP_GRAPHIFY"
-( cd "$TMP_GRAPHIFY" && graphify install --project --platform opencode ) || exit 1
-
-# Move installed artifacts to system opencode dir
-cp -r "$TMP_GRAPHIFY/.opencode/skills/graphify" "${OPENCODE_CONFIG_DIR}/skills/graphify"
-cp "$TMP_GRAPHIFY/.opencode/plugins/graphify.js" "${OPENCODE_CONFIG_DIR}/plugins/graphify.js"
-
-rm -rf "$TMP_GRAPHIFY"
-
-# Append graphify always-on section to AGENTS.md
-cat >> "${OPENCODE_CONFIG_DIR}/AGENTS.md" <<-'AGENTS_GRAPHIFY'
-
-## graphify
-
-This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
-
-When the user types `/graphify`, use the installed graphify skill or instructions before doing anything else.
-
-Rules:
-- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
-- Dirty graphify-out/ files are expected after hooks or incremental updates; dirty graph files are not a reason to skip graphify. Only skip graphify if the task is about stale or incorrect graph output, or the user explicitly says not to use it.
-- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
-- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
-- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
-AGENTS_GRAPHIFY
 
 ###
 # cleanup
@@ -407,13 +346,6 @@ RUN <<'FOE'
 
 BUN_INSTALL=/tmp/bun bun install --cwd "${OPENCODE_BUILD_DIR}/scripts" yaml || exit 1
 bun "${OPENCODE_BUILD_DIR}/scripts/install-skills.ts" || exit 1
-
-# Patch vendored skill: anydoc binary is preinstalled on PATH, so drop upstream npx fallback.
-ANYDOC_SKILL="${OPENCODE_CONFIG_DIR}/skills/convert-documents-to-markdown/SKILL.md"
-grep -q 'npx -y @firecrawl/anydoc' "$ANYDOC_SKILL" || { echo "anydoc skill patch: expected npx example not found" >&2; exit 1; }
-sed -i 's/npx -y @firecrawl\/anydoc/anydoc/g' "$ANYDOC_SKILL" || exit 1
-sed -i 's/It needs Node 20+ and no install:/It is preinstalled on PATH; invoke it directly, never via npx\/bunx:/' "$ANYDOC_SKILL" || exit 1
-! grep -q 'npx.*@firecrawl/anydoc' "$ANYDOC_SKILL" || { echo "anydoc skill patch: npx fallback still present" >&2; exit 1; }
 
 rm -rf "${OPENCODE_BUILD_DIR}"
 
