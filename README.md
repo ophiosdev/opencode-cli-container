@@ -353,6 +353,45 @@ The build bundles these tools and skills:
 The repository also includes `git-export.ts`, a Bun helper script that exports a single directory from
 a GitHub repository using a treeless, sparse clone workflow.
 
+### Skills manifest (`skills.yaml`)
+
+Skills are installed by `scripts/install-skills.ts` from the `skills.yaml` manifest. Beyond
+`download`, `git-export`, and `uv-pip` steps, a skill may declare ordered file-edit steps that run
+against its staged files before publishing:
+
+- `replace`: literal (non-regex) replacement of `from` with `to` in `file`, applied to every
+  non-overlapping occurrence. `expected` is optional: when present it requires exactly that many
+  occurrences, otherwise at least one is required. Counts fail loudly instead of shipping a
+  half-patched skill.
+- `assert-absent`: fails the install when the JavaScript regular expression `pattern` matches `file`.
+- `shell`: runs `commands` with `bash -c` (staging dir as cwd). Exposes `OPENCODE_CONFIG_DIR`,
+  `SKILL_NAME`, and `SKILL_STAGING_DIR`. Use only when the tool must install itself (graphify);
+  prefer declarative steps otherwise. A skill with a shell step merges staged files over the
+  skill dir instead of replacing it, so direct installs survive. Non-zero exit fails the build.
+
+Match counts are exact on purpose: if upstream skill text changes, the install fails instead of
+silently shipping a half-patched skill. Update the manifest after inspecting the upstream change.
+
+Each skill carries its own guidance: a skill may declare `agents_md` for the tool it installs
+(`moli-webfetch`, `convert-documents-to-markdown`, and `graphify` do). Skills may be grouped with
+`- group: <name>` holding `skills: [...]` plus one shared `agents_md` for the group; install order
+and guidance order follow manifest order, with a group's `agents_md` landing where the group sits
+(before its skills' own `agents_md`). After all skills install,
+the per-skill additions are concatenated in manifest skill order and written once to
+`${OPENCODE_CONFIG_DIR}/AGENTS.md`. A top-level `agents_md` remains available for genuinely shared
+guidance and, when present, comes first. The managed
+content lives in one block between `<!-- install-skills:agents-md:start -->` and
+`<!-- install-skills:agents-md:end -->`; base Caveman rules and anything outside the block are
+preserved byte-for-byte, and reruns are idempotent. Omitting both forms leaves `AGENTS.md` untouched.
+
+The `graphify` skill self-installs via `graphify install --project --platform opencode` in a
+temp dir (upstream's layout isn't a plain exportable skill tree), then moves its skill dir and
+opencode plugin into place — including the `.graphify_version` stamp. The Dockerfile installs
+only the graphify binary; the skill directory itself is manifest-owned.
+
+During image builds, `scripts/install-skills.test.ts` runs before installation, so a broken patch or
+manifest fails the build.
+
 ## Release Model
 
 This repo publishes container images to GitHub Container Registry from version tags.
