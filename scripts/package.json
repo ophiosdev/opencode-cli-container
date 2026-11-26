@@ -1,0 +1,27 @@
+{
+  "name": "@ophios/scripts",
+  "private": true,
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/bun": "1.4.4",
+    "@types/node": "^24.12.2",
+    "eslint": "^10.13.0",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.13.0",
+    "prettier": "^3.9.10",
+    "prettier-plugin-multiline-arrays": "^4.1.11",
+    "typescript": "6.0.3",
+    "typescript-eslint": "^8.72.1"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write . --ignore-path .prettierignore",
+    "format:check": "prettier --check . --ignore-path .prettierignore"
+  },
+  "dependencies": {
+    "yaml": "^2.9.1"
+  }
+}

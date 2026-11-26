@@ -1,0 +1,7 @@
+# actionlint #648: built-in metadata for create-github-app-token@v3 is stale
+# (app-id required, client-id missing). Upstream uses client-id.
+paths:
+  .github/workflows/**/*.{yaml,yml}:
+    ignore:
+      - 'missing input "app-id" which is required by action "actions/create-github-app-token@v3"'
+      - 'input "client-id" is not defined in action "actions/create-github-app-token@v3"'

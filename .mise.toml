@@ -1,6 +1,7 @@
 [tools]
-hadolint = "latest"
-prek = "latest"
-actionlint = "latest"
-typos = "latest"
-shellcheck = "latest"
+bun = { version = "latest", lazy = true }
+hadolint = { version = "latest", lazy = true }
+prek = { version = "latest", lazy = true }
+actionlint = { version = "latest", lazy = true }
+typos = { version = "latest", lazy = true }
+shellcheck = { version = "latest", lazy = true }

@@ -12,27 +12,38 @@ repos:
       - id: mixed-line-ending
       - id: check-merge-conflict
 
+  - repo: https://github.com/python-jsonschema/check-jsonschema
+    rev: 0.39.0
+    hooks:
+      - id: check-jsonschema
+        name: validate skills.yaml against schema
+        files: ^skills\.yaml$
+        args: [--schemafile, skills.schema.json]
+      - id: check-metaschema
+        name: validate skills schema
+        files: ^skills\.schema\.json$
+
   - repo: https://github.com/adrienverge/yamllint
     rev: v1.38.0
     hooks:
       - id: yamllint
 
   - repo: https://github.com/hadolint/hadolint
-    rev: v2.14.0
+    rev: v2.15.1
     hooks:
     - id: hadolint
 
   - repo: https://github.com/DavidAnson/markdownlint-cli2
-    rev: v0.21.0
+    rev: v0.24.2
     hooks:
     - id: markdownlint-cli2
 
   - repo: https://github.com/rhysd/actionlint
-    rev: v1.7.11
+    rev: v1.7.12
     hooks:
     - id: actionlint
 
   - repo: https://github.com/crate-ci/typos
-    rev: v1.44.0
+    rev: v1.52.2
     hooks:
     - id: typos
