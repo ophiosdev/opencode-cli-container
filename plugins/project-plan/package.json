@@ -8,11 +8,11 @@
   },
   "peerDependencies": {
     "@opencode/plugin": "2.2.3",
-    "effect": "4.1.6"
+    "effect": "4.1.7"
   },
   "devDependencies": {
     "@opencode/plugin": "2.2.3",
-    "effect": "4.1.6"
+    "effect": "4.1.7"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
